@@ -9,8 +9,15 @@
     "web": "expo start --web"
   },
   "dependencies": {
+    "@expo/vector-icons": "^14.0.3",
     "expo": "~51.0.28",
+    "expo-device": "~6.0.2",
+    "expo-image-manipulator": "~12.0.5",
+    "expo-image-picker": "~15.1.0",
+    "expo-notifications": "~0.28.19",
+    "expo-secure-store": "~13.0.2",
     "expo-status-bar": "~1.12.1",
+    "firebase": "^12.13.0",
     "react": "18.2.0",
     "react-native": "0.74.5"
   },
