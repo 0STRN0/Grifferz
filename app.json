@@ -1,4 +1,4 @@
-﻿{
+{
   "expo": {
     "name": "Grifferz",
     "slug": "GrifferzFinalV2",
@@ -17,6 +17,11 @@
         "backgroundColor": "#0a0a0a"
       },
       "package": "com.grifferz.store"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "a3378d73-e343-43a0-a9a9-e176a8f6fdcf"
+      }
     }
   }
 }
