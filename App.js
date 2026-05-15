@@ -1137,21 +1137,24 @@ export default function App() {
 
       {/* Modal Menu Perfil */}
       <Modal visible={modalMenuPerfil} animationType="slide" transparent>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'flex-end' }}>
-          <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 }}>
-              <Text style={{ color: C.prata, fontSize: 18, fontWeight: '700' }}>Opções</Text>
-              <TouchableOpacity onPress={() => setModalMenuPerfil(false)}><Ionicons name="close" size={24} color={C.prata} /></TouchableOpacity>
-            </View>
-            <TouchableOpacity style={[s.btnPrincipal, { marginBottom: 10 }]} onPress={() => { setModalMenuPerfil(false); abrirEditarPerfil(); }}>
-              <Text style={{ color: C.branco, fontWeight: '700' }}>✏️ Editar Perfil</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[s.btnPrincipal, { backgroundColor: C.erro, marginTop: 20 }]} onPress={() => { setModalMenuPerfil(false); handleExcluirConta(); }}>
-              <Text style={{ color: C.branco, fontWeight: '700' }}>⚠️ Excluir Conta</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+  <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'flex-end' }}>
+    <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 }}>
+        <Text style={{ color: C.prata, fontSize: 18, fontWeight: '700' }}>Opções</Text>
+        <TouchableOpacity onPress={() => setModalMenuPerfil(false)}><Ionicons name="close" size={24} color={C.prata} /></TouchableOpacity>
+      </View>
+      <TouchableOpacity style={[s.btnPrincipal, { marginBottom: 10 }]} onPress={() => { setModalMenuPerfil(false); abrirEditarPerfil(); }}>
+        <Text style={{ color: C.branco, fontWeight: '700' }}>✏️ Editar Perfil</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={[s.btnPrincipal, { marginBottom: 10, backgroundColor: C.card, borderWidth: 1, borderColor: C.erro }]} onPress={() => { setModalMenuPerfil(false); handleLogout(); }}>
+        <Text style={{ color: C.erro, fontWeight: '700' }}>🚪 Sair da Conta</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={[s.btnPrincipal, { backgroundColor: C.erro, marginTop: 10 }]} onPress={() => { setModalMenuPerfil(false); handleExcluirConta(); }}>
+        <Text style={{ color: C.branco, fontWeight: '700' }}>⚠️ Excluir Conta</Text>
+      </TouchableOpacity>
+    </View>
+  </View>
+</Modal>
 
       {/* Modal Novo Post */}
       <Modal visible={modalNovoPost} animationType="slide" transparent>
