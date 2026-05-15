@@ -3,7 +3,7 @@ import { View, Text, Image, FlatList, TouchableOpacity, TextInput, StyleSheet, S
 import { Ionicons } from '@expo/vector-icons';
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, getIdTokenResult } from 'firebase/auth';
-import { getFirestore, collection, addDoc, getDocs, doc, setDoc, getDoc, query, where, orderBy, updateDoc, arrayUnion, arrayRemove, deleteDoc, increment } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, getDocs, doc, setDoc, getDoc, query, where, orderBy, updateDoc, arrayUnion, arrayRemove, deleteDoc, increment, onSnapshot, serverTimestamp, limit, startAfter } from 'firebase/firestore';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as SecureStore from 'expo-secure-store';
@@ -29,6 +29,8 @@ const C = {
   roxo: '#7b2ff7', roxoClaro: '#9d4eff', branco: '#ffffff',
   card: '#111111', borda: '#1a1a1a', erro: '#ff2d55', sucesso: '#4caf50', amarelo: '#ffc107', laranja: '#ff9800',
 };
+
+const TAMANHOS = ['P', 'M', 'G', 'GG', 'XG', 'XGG'];
 
 export default function App() {
   const [carregando, setCarregando] = useState(true);
@@ -60,8 +62,8 @@ export default function App() {
   const [modalEditarImagem, setModalEditarImagem] = useState(null);
   const [modalVerificacao, setModalVerificacao] = useState(false);
   const [modalNovoProduto, setModalNovoProduto] = useState(false);
-  const [modalEditarMetodoVenda, setModalEditarMetodoVenda] = useState(false);
   const [modalPagamento, setModalPagamento] = useState(false);
+  const [modalMenuPerfil, setModalMenuPerfil] = useState(false);
   const [etapaPost, setEtapaPost] = useState(1);
   const [imagensSelecionadas, setImagensSelecionadas] = useState([]);
   const [legendaPost, setLegendaPost] = useState('');
@@ -86,11 +88,11 @@ export default function App() {
   const [vendasMarca, setVendasMarca] = useState([]);
   const [novoProdutoNome, setNovoProdutoNome] = useState('');
   const [novoProdutoPreco, setNovoProdutoPreco] = useState('');
-  const [novoProdutoLink, setNovoProdutoLink] = useState('');
-  const [metodoVenda, setMetodoVenda] = useState('site');
-  const [linkVenda, setLinkVenda] = useState('');
-  const [whatsappVenda, setWhatsappVenda] = useState('');
-  const [instagramVenda, setInstagramVenda] = useState('');
+  const [produtoImagens, setProdutoImagens] = useState([]);
+  const [produtoVideos, setProdutoVideos] = useState([]);
+  const [produtoDescricao, setProdutoDescricao] = useState('');
+  const [produtoTags, setProdutoTags] = useState('');
+  const [produtoTamanhos, setProdutoTamanhos] = useState([]);
   const [postAmpliado, setPostAmpliado] = useState(null);
   const [stories, setStories] = useState([]);
   const [seguindo, setSeguindo] = useState([]);
@@ -98,16 +100,19 @@ export default function App() {
   const [dropzTab, setDropzTab] = useState('produtos');
   const [dropzSearchQuery, setDropzSearchQuery] = useState('');
   const [dropzCategoriaFiltro, setDropzCategoriaFiltro] = useState('Todas');
-  const [produtoImagens, setProdutoImagens] = useState([]);
-  const [produtoVideos, setProdutoVideos] = useState([]);
-  const [produtoDescricao, setProdutoDescricao] = useState('');
-  const [produtoTags, setProdutoTags] = useState('');
   const [postCarrosselIndex, setPostCarrosselIndex] = useState(0);
+  const [fotoCapa, setFotoCapa] = useState(null);
+  const [collabTab, setCollabTab] = useState('marcas');
+  const [collabChat, setCollabChat] = useState(null);
+  const [collabMensagem, setCollabMensagem] = useState('');
+  const [collabMensagens, setCollabMensagens] = useState([]);
+  const [collabMarcas, setCollabMarcas] = useState([]);
 
   const podePostar = () => {
     return usuario?.tipo === 'marca_aprovada' || usuario?.role === 'admin';
   };
 
+  // NOTIFICAÇÕES
   useEffect(() => {
     registerForPushNotificationsAsync();
     const subscription = Notifications.addNotificationReceivedListener(n => console.log('Notificação:', n));
@@ -121,6 +126,7 @@ export default function App() {
     }
   }
 
+  // STORIES
   useEffect(() => {
     if (logado) {
       const interval = setInterval(() => {
@@ -138,6 +144,7 @@ export default function App() {
     }
   };
 
+  // SEGUIDORES
   const seguirMarca = async (marcaId) => {
     if (seguindo.includes(marcaId)) {
       setSeguindo(prev => prev.filter(id => id !== marcaId));
@@ -150,10 +157,13 @@ export default function App() {
     }
   };
 
-  const processarPagamento = (metodo) => {
-    setModalPagamento(false); setModalCheckout(false);
-    if (metodo === 'pix') Alert.alert('📱 PIX', 'Chave copiada!', [{ text: 'Já paguei', onPress: finalizarPedido }]);
-    else Alert.alert('💳 Cartão', 'Pagamento processado!', [{ text: 'OK', onPress: finalizarPedido }]);
+  // PAGAMENTO (PagSeguro)
+  const processarPagamento = () => {
+    setModalPagamento(false);
+    setModalCheckout(false);
+    // Abre o checkout do PagSeguro
+    Linking.openURL('https://pagseguro.uol.com.br/checkout/payment');
+    finalizarPedido();
   };
 
   const verificarSessao = async () => {
@@ -218,9 +228,17 @@ export default function App() {
       const snapPedidos = await getDocs(query(collection(db, 'pedidos'), where('clienteId', '==', usuario?.uid), orderBy('criadoEm', 'desc')));
       const listaPedidos = []; snapPedidos.forEach(doc => listaPedidos.push({ id: doc.id, ...doc.data() }));
       setMeusPedidos(listaPedidos);
+
+      // Marcas para Collabz (APENAS marcas aprovadas)
+      if (podePostar()) {
+        const snapMarcas = await getDocs(query(collection(db, 'usuarios'), where('tipo', '==', 'marca_aprovada')));
+        const listaMarcas = []; snapMarcas.forEach(doc => listaMarcas.push({ id: doc.id, ...doc.data() }));
+        setCollabMarcas(listaMarcas.filter(m => m.id !== usuario.uid));
+      }
     } catch (e) { console.log(e); }
   };
 
+  // CARRINHO
   const adicionarAoCarrinho = (p) => {
     const ex = carrinho.find(i => i.id === p.id);
     if (ex) setCarrinho(carrinho.map(i => i.id === p.id ? { ...i, quantidade: i.quantidade + 1 } : i));
@@ -250,6 +268,7 @@ export default function App() {
     Alert.alert('✅ Atualizado!'); carregarTodosDados();
   };
 
+  // PRODUTOS
   const selecionarImagensProduto = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsMultipleSelection: true, selectionLimit: 10, quality: 0.8,
@@ -258,7 +277,6 @@ export default function App() {
       setProdutoImagens(prev => [...prev, ...result.assets.map(a => a.uri)].slice(0, 10));
     }
   };
-
   const selecionarVideosProduto = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Videos, allowsMultipleSelection: true, selectionLimit: 2, quality: 0.8,
@@ -267,9 +285,9 @@ export default function App() {
       setProdutoVideos(prev => [...prev, ...result.assets.map(a => a.uri)].slice(0, 2));
     }
   };
-
   const removerImagemProduto = (index) => setProdutoImagens(prev => prev.filter((_, i) => i !== index));
   const removerVideoProduto = (index) => setProdutoVideos(prev => prev.filter((_, i) => i !== index));
+  const toggleTamanho = (tam) => setProdutoTamanhos(prev => prev.includes(tam) ? prev.filter(t => t !== tam) : [...prev, tam]);
 
   const adicionarProduto = async () => {
     if (!novoProdutoNome.trim() || !novoProdutoPreco.trim()) { Alert.alert('Preencha nome e preço!'); return; }
@@ -280,20 +298,18 @@ export default function App() {
         price: 'R$ ' + novoProdutoPreco.trim(), images: produtoImagens, videos: produtoVideos,
         descricao: produtoDescricao.trim(),
         tags: produtoTags.trim().split(',').map(t => t.trim().toLowerCase()).filter(t => t),
-        linkVenda: novoProdutoLink.trim() || linkVenda.trim(), tipoVenda: metodoVenda,
+        tamanhos: produtoTamanhos,
         countdown: 'Disponível', criadoEm: new Date().toISOString(),
       });
       setModalNovoProduto(false); setNovoProdutoNome(''); setNovoProdutoPreco('');
-      setProdutoImagens([]); setProdutoVideos([]); setProdutoDescricao(''); setProdutoTags(''); setNovoProdutoLink('');
+      setProdutoImagens([]); setProdutoVideos([]); setProdutoDescricao(''); setProdutoTags(''); setProdutoTamanhos([]);
       Alert.alert('✅ Produto adicionado!'); carregarTodosDados();
     } catch (e) { Alert.alert('Erro ao adicionar'); }
   };
 
-  const comprarProduto = (p) => {
-    if (p.linkVenda) Linking.openURL(p.linkVenda);
-    else Alert.alert('Comprar', `Entre em contato com ${p.brand}.`);
-  };
+  const comprarProduto = (p) => { adicionarAoCarrinho(p); Alert.alert('✅ Adicionado!', 'Produto adicionado ao carrinho.'); };
 
+  // ADMIN
   const carregarMarcasPendentes = async () => {
     const q = query(collection(db, 'usuarios'), where('tipo', '==', 'marca_pendente'));
     const sn = await getDocs(q); const pend = []; sn.forEach(d => pend.push({ id: d.id, ...d.data() }));
@@ -304,16 +320,13 @@ export default function App() {
     Alert.alert('Rejeitar', 'Confirmar?', [{ text: 'Sim', style: 'destructive', onPress: async () => { await updateDoc(doc(db, 'usuarios', id), { tipo: 'cliente', status: 'rejeitado' }); Alert.alert('❌'); carregarMarcasPendentes(); } }, { text: 'Cancelar', style: 'cancel' }]);
   };
 
-  const salvarMetodoVenda = async () => {
-    await updateDoc(doc(db, 'usuarios', usuario.uid), { metodoVenda, linkVenda: linkVenda.trim(), whatsappVenda: whatsappVenda.trim(), instagramVenda: instagramVenda.trim() });
-    setUsuario({ ...usuario, metodoVenda, linkVenda: linkVenda.trim(), whatsappVenda: whatsappVenda.trim(), instagramVenda: instagramVenda.trim() });
-    setModalEditarMetodoVenda(false); Alert.alert('✅ Salvo!');
-  };
-
-  const abrirEditarMetodoVenda = () => {
-    setMetodoVenda(usuario?.metodoVenda || 'site'); setLinkVenda(usuario?.linkVenda || '');
-    setWhatsappVenda(usuario?.whatsappVenda || ''); setInstagramVenda(usuario?.instagramVenda || '');
-    setModalEditarMetodoVenda(true);
+  // FOTO DE CAPA
+  const selecionarFotoCapa = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, quality: 0.8 });
+    if (!result.canceled && result.assets) {
+      setFotoCapa(result.assets[0].uri);
+      await updateDoc(doc(db, 'usuarios', usuario.uid), { fotoCapa: result.assets[0].uri });
+    }
   };
 
   const solicitarDocumento = async () => { const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.8 }); if (!r.canceled && r.assets) setDocumentoMarca(r.assets[0].uri); };
@@ -327,13 +340,57 @@ export default function App() {
   const avancarEtapa = () => { if (imagensSelecionadas.length === 0 && !videoUri) { Alert.alert('Selecione imagem ou vídeo!'); return; } setEtapaPost(2); };
   const publicarPost = async () => { if (!podePostar()) return; if (!legendaPost.trim()) { Alert.alert('Adicione legenda!'); return; } try { await addDoc(collection(db, 'posts'), { marcaId: usuario.uid, marcaNome: usuario.nome, marcaFoto: usuario.foto, imagens: imagensSelecionadas, video: videoUri, desc: legendaPost.trim(), mencao: mencaoPost.trim(), tipo: tipoPost, likes: 0, comments: [], reposts: 0, data: 'Agora', criadoEm: new Date().toISOString() }); limparFormPost(); carregarTodosDados(); Alert.alert('✅ Publicado!'); } catch (e) { Alert.alert('Erro'); } };
   const limparFormPost = () => { setModalNovoPost(false); setEtapaPost(1); setImagensSelecionadas([]); setVideoUri(null); setLegendaPost(''); setMencaoPost(''); setTipoPost('normal'); };
-  const handleLike = async (postId) => { const ref = doc(db, 'posts', postId); const post = timelinePosts.find(p => p.id === postId) || hypezPosts.find(p => p.id === postId); if (!post) return; const c = likedPosts[postId]; await updateDoc(ref, { likes: c ? post.likes - 1 : post.likes + 1 }); setLikedPosts(prev => ({ ...prev, [postId]: !c })); carregarTodosDados(); };
+
+  // ✅ CORRIGIDO: Curtir NÃO recarrega a timeline
+  const handleLike = async (postId) => {
+    const ref = doc(db, 'posts', postId);
+    const post = timelinePosts.find(p => p.id === postId) || hypezPosts.find(p => p.id === postId);
+    if (!post) return;
+    const jaCurtiu = likedPosts[postId];
+    await updateDoc(ref, { likes: jaCurtiu ? post.likes - 1 : post.likes + 1 });
+    setLikedPosts(prev => ({ ...prev, [postId]: !jaCurtiu }));
+    // Atualiza APENAS o post localmente, sem recarregar tudo
+    setTimelinePosts(prev => prev.map(p => p.id === postId ? { ...p, likes: jaCurtiu ? p.likes - 1 : p.likes + 1 } : p));
+    setHypezPosts(prev => prev.map(p => p.id === postId ? { ...p, likes: jaCurtiu ? p.likes - 1 : p.likes + 1 } : p));
+  };
+
   const handleSave = (postId) => { setSavedPosts(prev => ({ ...prev, [postId]: !prev[postId] })); };
-  const handleRepost = async (postId) => { await updateDoc(doc(db, 'posts', postId), { reposts: increment(1) }); Alert.alert('✅ Repostado!'); carregarTodosDados(); };
+  const handleRepost = async (postId) => {
+    await updateDoc(doc(db, 'posts', postId), { reposts: increment(1) });
+    Alert.alert('✅ Repostado!');
+    // Atualiza localmente
+    setTimelinePosts(prev => prev.map(p => p.id === postId ? { ...p, reposts: (p.reposts || 0) + 1 } : p));
+  };
   const handleExcluirPost = (postId) => { Alert.alert('🗑️ Excluir Post', 'Confirmar?', [{ text: 'Excluir', style: 'destructive', onPress: async () => { await deleteDoc(doc(db, 'posts', postId)); Alert.alert('✅ Excluído!'); carregarTodosDados(); } }, { text: 'Cancelar', style: 'cancel' }]); };
   const abrirComentarios = (postId) => setModalComentarios(postId);
-  const enviarComentario = async () => { if (!comentarioTexto.trim() || !modalComentarios) return; await updateDoc(doc(db, 'posts', modalComentarios), { comments: arrayUnion({ texto: comentarioTexto, autor: usuario?.nome || 'Anônimo', data: 'Agora' }) }); setComentarioTexto(''); setModalComentarios(null); carregarTodosDados(); };
+  const enviarComentario = async () => { if (!comentarioTexto.trim() || !modalComentarios) return; await updateDoc(doc(db, 'posts', modalComentarios), { comments: arrayUnion({ texto: comentarioTexto, autor: usuario?.nome || 'Anônimo', data: 'Agora' }) }); setComentarioTexto(''); setModalComentarios(null); };
 
+  // COLLABZ CHAT
+  useEffect(() => {
+    if (collabChat) {
+      const q = query(collection(db, 'collabz_messages'), where('chatId', '==', collabChat.id), orderBy('timestamp'));
+      const unsub = onSnapshot(q, (snapshot) => {
+        const msgs = [];
+        snapshot.forEach(doc => msgs.push({ id: doc.id, ...doc.data() }));
+        setCollabMensagens(msgs);
+      });
+      return () => unsub();
+    }
+  }, [collabChat]);
+
+  const enviarMensagemCollab = async () => {
+    if (!collabMensagem.trim() || !collabChat) return;
+    await addDoc(collection(db, 'collabz_messages'), {
+      chatId: collabChat.id,
+      senderId: usuario.uid,
+      senderNome: usuario.nome,
+      texto: collabMensagem.trim(),
+      timestamp: serverTimestamp(),
+    });
+    setCollabMensagem('');
+  };
+
+  // AUTENTICAÇÃO
   const handleCadastro = async () => {
     setErro('');
     if (!email.trim() || !senha.trim()) { setErro('Preencha todos!'); return; }
@@ -343,7 +400,7 @@ export default function App() {
     setLoading(true);
     try {
       const uc = await createUserWithEmailAndPassword(auth, email.trim(), senha);
-      const data = { email: email.trim(), tipo: tipo === 'marca' ? 'marca_pendente' : 'cliente', nome: tipo === 'marca' ? nomeMarca : email.split('@')[0], usuario: '@' + email.split('@')[0], bio: 'Novo no Grifferz', foto: 'https://picsum.photos/200?random=' + Math.floor(Math.random() * 1000), categoria: tipo === 'marca' ? (categoria || 'Moda') : '', cnpj: tipo === 'marca' ? cnpj : '', documentoMarca: tipo === 'marca' ? documentoMarca : '', status: tipo === 'marca' ? 'pendente' : 'aprovado', metodoVenda: 'site', linkVenda: '', whatsappVenda: '', instagramVenda: '', seguidores: [], seguindo: [], criadoEm: new Date().toISOString() };
+      const data = { email: email.trim(), tipo: tipo === 'marca' ? 'marca_pendente' : 'cliente', nome: tipo === 'marca' ? nomeMarca : email.split('@')[0], usuario: '@' + email.split('@')[0], bio: 'Novo no Grifferz', foto: 'https://picsum.photos/200?random=' + Math.floor(Math.random() * 1000), categoria: tipo === 'marca' ? (categoria || 'Moda') : '', cnpj: tipo === 'marca' ? cnpj : '', documentoMarca: tipo === 'marca' ? documentoMarca : '', status: tipo === 'marca' ? 'pendente' : 'aprovado', fotoCapa: null, seguidores: [], seguindo: [], criadoEm: new Date().toISOString() };
       await setDoc(doc(db, 'usuarios', uc.user.uid), data);
       setUsuario({ uid: uc.user.uid, ...data });
       if (tipo === 'marca') setModalVerificacao(true); else { setLogado(true); setTab('home'); }
@@ -386,7 +443,7 @@ export default function App() {
   const handleEditarPerfil = async () => {
     await updateDoc(doc(db, 'usuarios', usuario.uid), { nome: editNome, bio: editBio, categoria: editCategoria, foto: editFoto || usuario.foto });
     setUsuario({ ...usuario, nome: editNome, bio: editBio, categoria: editCategoria, foto: editFoto || usuario.foto });
-    setModalEditarPerfil(false); Alert.alert('✅ Atualizado!');
+    setModalEditarPerfil(false); setModalMenuPerfil(false); Alert.alert('✅ Atualizado!');
   };
 
   const abrirEditarPerfil = () => { setEditNome(usuario?.nome || ''); setEditBio(usuario?.bio || ''); setEditCategoria(usuario?.categoria || ''); setEditFoto(usuario?.foto || ''); setModalEditarPerfil(true); };
@@ -401,6 +458,7 @@ export default function App() {
     }
   };
 
+  // ======================== TELAS ========================
   if (carregando) {
     return (
       <View style={{ flex: 1, backgroundColor: C.bg, justifyContent: 'center', alignItems: 'center' }}>
@@ -480,7 +538,8 @@ export default function App() {
           <Text style={{ color: C.prata, fontSize: 18, fontWeight: '700' }}>{p.usuario}</Text>
         </View>
         <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.roxo} colors={[C.roxo]} />}>
-          <View style={{ alignItems: 'center', padding: 20 }}>
+          {p.fotoCapa && <Image source={{ uri: p.fotoCapa }} style={{ width: '100%', height: 150 }} />}
+          <View style={{ alignItems: 'center', padding: 20, marginTop: p.fotoCapa ? -40 : 0 }}>
             <Image source={{ uri: p.foto || 'https://picsum.photos/200' }} style={{ width: 100, height: 100, borderRadius: 50, borderWidth: 2, borderColor: C.prata }} />
             <Text style={{ color: C.prata, fontSize: 22, fontWeight: '700', marginTop: 10 }}>{p.nome}</Text>
             <Text style={{ color: C.prataEscuro }}>{p.bio}</Text>
@@ -514,18 +573,12 @@ export default function App() {
   const tabsAdmin = usuario?.role === 'admin' ? [{ key: 'admin', icon: 'shield-checkmark', label: 'Admin' }] : [];
   const tabsFinal = [...(podePostar() ? tabsMarca : tabsBase), ...tabsAdmin, { key: 'profile', icon: 'person', label: 'Perfil' }];
 
-  // 🛍️ DROPZ (MARKETPLACE ESTILO MERCADO LIVRE)
+  // DROPZ
   const DropsScreen = () => {
     const produtosFiltrados = drops.filter(d => {
       const query = dropzSearchQuery.toLowerCase();
-      const matchSearch = !query || 
-        d.name?.toLowerCase().includes(query) ||
-        d.brand?.toLowerCase().includes(query) ||
-        d.descricao?.toLowerCase().includes(query) ||
-        d.tags?.some(tag => tag.includes(query));
-      const matchCategoria = dropzCategoriaFiltro === 'Todas' || 
-        d.categoria === dropzCategoriaFiltro ||
-        d.tags?.includes(dropzCategoriaFiltro.toLowerCase());
+      const matchSearch = !query || d.name?.toLowerCase().includes(query) || d.brand?.toLowerCase().includes(query) || d.descricao?.toLowerCase().includes(query) || d.tags?.some(tag => tag.includes(query));
+      const matchCategoria = dropzCategoriaFiltro === 'Todas' || d.categoria === dropzCategoriaFiltro || d.tags?.includes(dropzCategoriaFiltro.toLowerCase());
       return matchSearch && matchCategoria;
     });
 
@@ -541,23 +594,19 @@ export default function App() {
           </View>
           {podePostar() && <TouchableOpacity onPress={() => setModalNovoProduto(true)}><Ionicons name="add-circle" size={28} color={C.roxo} /></TouchableOpacity>}
         </View>
-
         <View style={{ paddingHorizontal: 16, marginBottom: 8 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: C.card, borderRadius: 25, paddingHorizontal: 15, borderWidth: 1, borderColor: C.borda }}>
             <Ionicons name="search" size={18} color={C.prataEscuro} />
-            <TextInput style={{ flex: 1, color: C.branco, paddingVertical: 12, marginLeft: 8, fontSize: 13 }} placeholder="Buscar produtos, marcas, categorias..." placeholderTextColor={C.prataEscuro} value={dropzSearchQuery} onChangeText={setDropzSearchQuery} />
-            {dropzSearchQuery.length > 0 && <TouchableOpacity onPress={() => setDropzSearchQuery('')}><Ionicons name="close-circle" size={18} color={C.prataEscuro} /></TouchableOpacity>}
+            <TextInput style={{ flex: 1, color: C.branco, paddingVertical: 12, marginLeft: 8, fontSize: 13 }} placeholder="Buscar..." placeholderTextColor={C.prataEscuro} value={dropzSearchQuery} onChangeText={setDropzSearchQuery} />
           </View>
         </View>
-
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingLeft: 16, marginBottom: 8 }}>
-          {['Todas', 'Roupas', 'Calçados', 'Acessórios', 'Joias', 'Bolsas', 'Streetwear', 'Luxo', 'Vintage'].map(cat => (
+          {['Todas', 'Roupas', 'Calçados', 'Acessórios', 'Joias', 'Bolsas'].map(cat => (
             <TouchableOpacity key={cat} style={[s.chipFiltro, dropzCategoriaFiltro === cat && { backgroundColor: C.roxo }]} onPress={() => setDropzCategoriaFiltro(cat)}>
-              <Text style={{ color: dropzCategoriaFiltro === cat ? C.branco : C.prataEscuro, fontWeight: '600', fontSize: 11 }}>{cat}</Text>
+              <Text style={{ color: dropzCategoriaFiltro === cat ? C.branco : C.prataEscuro, fontSize: 11, fontWeight: '600' }}>{cat}</Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
-
         <View style={{ flexDirection: 'row', paddingHorizontal: 16, gap: 8, marginBottom: 10 }}>
           <TouchableOpacity style={[s.chipFiltro, dropzTab === 'produtos' && { backgroundColor: C.roxo }]} onPress={() => setDropzTab('produtos')}>
             <Text style={{ color: dropzTab === 'produtos' ? C.branco : C.prataEscuro, fontWeight: '600', fontSize: 12 }}>🛍️ Produtos</Text>
@@ -566,45 +615,23 @@ export default function App() {
             <Text style={{ color: dropzTab === 'pedidos' ? C.branco : C.prataEscuro, fontWeight: '600', fontSize: 12 }}>📦 {podePostar() ? 'Vendas' : 'Meus Pedidos'}</Text>
           </TouchableOpacity>
         </View>
-
         {dropzTab === 'produtos' ? (
           <FlatList data={produtosFiltrados} numColumns={2} keyExtractor={item => item.id} columnWrapperStyle={{ paddingHorizontal: 12, gap: 10 }}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.roxo} colors={[C.roxo]} />}
-            ListEmptyComponent={<View style={{ padding: 40, alignItems: 'center' }}><Ionicons name="search-outline" size={50} color={C.borda} /><Text style={{ color: C.prataEscuro, marginTop: 10 }}>{dropzSearchQuery ? 'Nenhum produto encontrado' : 'Nenhum produto ainda'}</Text></View>}
+            ListEmptyComponent={<View style={{ padding: 40, alignItems: 'center' }}><Ionicons name="search-outline" size={50} color={C.borda} /><Text style={{ color: C.prataEscuro, marginTop: 10 }}>Nenhum produto</Text></View>}
             renderItem={({ item }) => (
               <TouchableOpacity style={s.produtoCard} onPress={() => setPostAmpliado({ ...item, imagens: item.images, desc: item.descricao || item.name, marcaNome: item.brand, likes: 0 })}>
-                {item.images && item.images.length > 0 ? (
-                  <Image source={{ uri: item.images[0] }} style={{ width: '100%', height: 180, borderTopLeftRadius: 12, borderTopRightRadius: 12 }} />
-                ) : (
-                  <Image source={{ uri: item.image }} style={{ width: '100%', height: 180, borderTopLeftRadius: 12, borderTopRightRadius: 12 }} />
-                )}
-                {item.images && item.images.length > 1 && (
-                  <View style={{ position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}>
-                    <Text style={{ color: C.branco, fontSize: 10 }}>1/{item.images.length}</Text>
-                  </View>
-                )}
-                {item.videos && item.videos.length > 0 && (
-                  <View style={{ position: 'absolute', top: 8, left: 8, backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Ionicons name="play" size={10} color={C.branco} /><Text style={{ color: C.branco, fontSize: 10 }}>{item.videos.length}</Text>
-                  </View>
-                )}
+                <Image source={{ uri: item.images?.[0] || item.image }} style={{ width: '100%', height: 180, borderTopLeftRadius: 12, borderTopRightRadius: 12 }} />
+                {item.images?.length > 1 && <View style={{ position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}><Text style={{ color: C.branco, fontSize: 10 }}>1/{item.images.length}</Text></View>}
                 <View style={{ padding: 10 }}>
                   <Text style={{ color: C.roxoClaro, fontSize: 10 }}>{item.brand}</Text>
                   <Text style={{ color: C.prata, fontSize: 13, fontWeight: '700' }} numberOfLines={2}>{item.name}</Text>
-                  {item.tags && item.tags.length > 0 && (
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-                      {item.tags.slice(0, 3).map((tag, i) => <Text key={i} style={{ color: C.prataEscuro, fontSize: 8, backgroundColor: C.card, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 }}>#{tag}</Text>)}
-                    </View>
-                  )}
+                  {item.tags?.length > 0 && <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>{item.tags.slice(0,3).map((tag, i) => <Text key={i} style={{ color: C.prataEscuro, fontSize: 8, backgroundColor: C.card, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 }}>#{tag}</Text>)}</View>}
+                  {item.tamanhos?.length > 0 && <Text style={{ color: C.prataEscuro, fontSize: 10, marginTop: 4 }}>Tam: {item.tamanhos.join(', ')}</Text>}
                   <Text style={{ color: C.sucesso, fontSize: 14, fontWeight: '700', marginTop: 4 }}>{item.price}</Text>
-                  <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
-                    <TouchableOpacity style={[s.btnCarrinho, { flex: 1 }]} onPress={() => { adicionarAoCarrinho(item); Alert.alert('✅ Adicionado!'); }}>
-                      <Ionicons name="cart-outline" size={13} color={C.branco} /><Text style={{ color: C.branco, fontSize: 10, marginLeft: 3 }}>Carrinho</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[s.btnComprar, { flex: 1.5 }]} onPress={() => comprarProduto(item)}>
-                      <Ionicons name="link" size={13} color={C.branco} /><Text style={{ color: C.branco, fontWeight: '600', fontSize: 10, marginLeft: 3 }}>Comprar</Text>
-                    </TouchableOpacity>
-                  </View>
+                  <TouchableOpacity style={[s.btnCarrinho, { marginTop: 8 }]} onPress={() => comprarProduto(item)}>
+                    <Ionicons name="cart-outline" size={13} color={C.branco} /><Text style={{ color: C.branco, fontSize: 10, marginLeft: 3 }}>Carrinho</Text>
+                  </TouchableOpacity>
                 </View>
               </TouchableOpacity>
             )}
@@ -612,7 +639,7 @@ export default function App() {
         ) : (
           <FlatList data={podePostar() ? vendasMarca : meusPedidos} keyExtractor={item => item.id}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.roxo} colors={[C.roxo]} />}
-            ListEmptyComponent={<View style={{ padding: 40, alignItems: 'center' }}><Ionicons name="receipt-outline" size={60} color={C.borda} /><Text style={{ color: C.prataEscuro, marginTop: 10 }}>Nenhum pedido ainda</Text></View>}
+            ListEmptyComponent={<View style={{ padding: 40, alignItems: 'center' }}><Ionicons name="receipt-outline" size={60} color={C.borda} /><Text style={{ color: C.prataEscuro, marginTop: 10 }}>Nenhum pedido</Text></View>}
             renderItem={({ item }) => (
               <View style={s.pedidoCard}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><Text style={{ color: C.prata, fontWeight: '700' }}>Pedido #{item.id.slice(-6)}</Text><Text style={{ color: item.status === 'entregue' ? C.sucesso : item.status === 'cancelado' ? C.erro : C.laranja, fontWeight: '600', fontSize: 12 }}>{item.status.toUpperCase()}</Text></View>
@@ -620,8 +647,8 @@ export default function App() {
                 <Text style={{ color: C.sucesso, fontWeight: '700', marginTop: 4 }}>Total: R$ {item.total}</Text>
                 {podePostar() && item.status === 'pendente' && (
                   <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
-                    <TouchableOpacity style={[s.btnAcao, { backgroundColor: C.sucesso }]} onPress={() => atualizarStatusPedido(item.id, 'enviado')}><Text style={{ color: C.branco, fontSize: 11, fontWeight: '600' }}>Enviado</Text></TouchableOpacity>
-                    <TouchableOpacity style={[s.btnAcao, { backgroundColor: C.erro }]} onPress={() => atualizarStatusPedido(item.id, 'cancelado')}><Text style={{ color: C.branco, fontSize: 11, fontWeight: '600' }}>Cancelar</Text></TouchableOpacity>
+                    <TouchableOpacity style={[s.btnAcao, { backgroundColor: C.sucesso }]} onPress={() => atualizarStatusPedido(item.id, 'enviado')}><Text style={{ color: C.branco, fontSize: 11 }}>Enviado</Text></TouchableOpacity>
+                    <TouchableOpacity style={[s.btnAcao, { backgroundColor: C.erro }]} onPress={() => atualizarStatusPedido(item.id, 'cancelado')}><Text style={{ color: C.branco, fontSize: 11 }}>Cancelar</Text></TouchableOpacity>
                   </View>
                 )}
               </View>
@@ -632,7 +659,7 @@ export default function App() {
     );
   };
 
-  // 🏠 HOME
+  // HOME
   const HomeScreen = () => (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
       <View style={{ paddingHorizontal: 16, paddingTop: 50, paddingBottom: 5 }}><Text style={{ color: C.prata, fontSize: 26, fontWeight: '900', letterSpacing: 4 }}>GRIFFERZ</Text></View>
@@ -642,26 +669,23 @@ export default function App() {
           <View>
             {stories.length > 0 && (
               <View style={{ paddingLeft: 16, marginBottom: 15 }}>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {stories.map(story => (
-                    <TouchableOpacity key={story.id} style={{ marginRight: 12, alignItems: 'center' }}>
-                      <Image source={{ uri: story.marcaFoto }} style={{ width: 68, height: 68, borderRadius: 34, borderWidth: 2, borderColor: C.roxo }} />
-                      <Text style={{ color: C.prataEscuro, fontSize: 9, marginTop: 4 }}>{story.marcaNome}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
+                <ScrollView horizontal>{stories.map(story => (
+                  <TouchableOpacity key={story.id} style={{ marginRight: 12, alignItems: 'center' }}>
+                    <Image source={{ uri: story.marcaFoto }} style={{ width: 68, height: 68, borderRadius: 34, borderWidth: 2, borderColor: C.roxo }} />
+                    <Text style={{ color: C.prataEscuro, fontSize: 9, marginTop: 4 }}>{story.marcaNome}</Text>
+                  </TouchableOpacity>
+                ))}</ScrollView>
               </View>
             )}
             {drops.length > 0 && (
               <View style={{ marginBottom: 15 }}>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingLeft: 16 }}>
-                  {drops.slice(0, 5).map(drop => (
+                <ScrollView horizontal style={{ paddingLeft: 16 }}>
+                  {drops.slice(0,5).map(drop => (
                     <TouchableOpacity key={drop.id} style={{ marginRight: 12, width: 130, backgroundColor: C.card, borderRadius: 12, overflow: 'hidden' }} onPress={() => setTab('drops')}>
                       <Image source={{ uri: drop.images?.[0] || drop.image }} style={{ width: 130, height: 100 }} />
                       <View style={{ padding: 8 }}><Text style={{ color: C.roxoClaro, fontSize: 9 }}>{drop.brand}</Text><Text style={{ color: C.prata, fontSize: 11 }}>{drop.name}</Text><Text style={{ color: C.sucesso, fontSize: 11, fontWeight: '700' }}>{drop.price}</Text></View>
                     </TouchableOpacity>
-                  ))}
-                </ScrollView>
+                  ))}</ScrollView>
               </View>
             )}
           </View>
@@ -673,21 +697,17 @@ export default function App() {
                 <Image source={{ uri: item.marcaFoto || 'https://picsum.photos/32' }} style={{ width: 32, height: 32, borderRadius: 16 }} />
                 <Text style={{ color: C.prata, fontWeight: '700' }}>{item.marcaNome}</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => { if (item.marcaId === usuario?.uid || usuario?.role === 'admin') Alert.alert('Opções', '', [{ text: 'Excluir Post', style: 'destructive', onPress: () => handleExcluirPost(item.id) }, { text: 'Cancelar', style: 'cancel' }]); }}>
+              <TouchableOpacity onPress={() => { if (item.marcaId === usuario?.uid || usuario?.role === 'admin') Alert.alert('Opções', '', [{ text: 'Excluir', style: 'destructive', onPress: () => handleExcluirPost(item.id) }, { text: 'Cancelar', style: 'cancel' }]); }}>
                 <Ionicons name="ellipsis-horizontal" size={18} color={C.prataEscuro} />
               </TouchableOpacity>
             </View>
-            {item.imagens && item.imagens.length > 1 ? (
+            {item.imagens?.length > 1 ? (
               <View>
                 <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}>
-                  {item.imagens.map((img, i) => (
-                    <Image key={i} source={{ uri: img }} style={{ width, height: 450 }} />
-                  ))}
+                  {item.imagens.map((img, i) => <Image key={i} source={{ uri: img }} style={{ width, height: 450 }} />)}
                 </ScrollView>
                 <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 4, gap: 6 }}>
-                  {item.imagens.map((_, i) => (
-                    <View key={i} style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: i === 0 ? C.roxo : C.borda }} />
-                  ))}
+                  {item.imagens.map((_, i) => <View key={i} style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: i === 0 ? C.roxo : C.borda }} />)}
                 </View>
               </View>
             ) : (
@@ -709,7 +729,7 @@ export default function App() {
     </SafeAreaView>
   );
 
-  // ⚡ HYPEZ
+  // HYPEZ
   const HypezScreen = () => (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
       <View style={{ paddingHorizontal: 16, paddingTop: 50, paddingBottom: 10 }}><Text style={{ color: C.prata, fontSize: 26, fontWeight: '900', letterSpacing: 4 }}>Hypez ⚡</Text></View>
@@ -731,7 +751,7 @@ export default function App() {
     </SafeAreaView>
   );
 
-  // 👑 ADMIN
+  // ADMIN
   const AdminScreen = () => {
     useEffect(() => { carregarMarcasPendentes(); }, []);
     return (
@@ -746,37 +766,42 @@ export default function App() {
                 <Image source={{ uri: item.foto || 'https://picsum.photos/100' }} style={{ width: 50, height: 50, borderRadius: 25 }} />
                 <View style={{ flex: 1 }}><Text style={{ color: C.prata, fontWeight: '700' }}>{item.nome}</Text><Text style={{ color: C.prataEscuro, fontSize: 12 }}>{item.email}</Text><Text style={{ color: C.roxoClaro, fontSize: 11 }}>{item.categoria}</Text><Text style={{ color: C.prataEscuro, fontSize: 10 }}>CNPJ: {item.cnpj}</Text></View>
               </View>
-              {item.documentoMarca && <TouchableOpacity style={{ marginTop: 10, alignItems: 'center' }} onPress={() => Alert.alert('📄 CNPJ', '', [{ text: 'Ver', onPress: () => Linking.openURL(item.documentoMarca) }, { text: 'Fechar', style: 'cancel' }])}><Image source={{ uri: item.documentoMarca }} style={s.docPreview} /></TouchableOpacity>}
+              {item.documentoMarca && <TouchableOpacity style={{ marginTop: 10 }} onPress={() => Alert.alert('📄', '', [{ text: 'Ver', onPress: () => Linking.openURL(item.documentoMarca) }])}><Image source={{ uri: item.documentoMarca }} style={s.docPreview} /></TouchableOpacity>}
               <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-                <TouchableOpacity style={[s.btnAcao, { backgroundColor: C.sucesso }]} onPress={() => aprovarMarca(item.id)}><Ionicons name="checkmark" size={18} color={C.branco} /><Text style={{ color: C.branco, fontWeight: '600', marginLeft: 5 }}>Aprovar</Text></TouchableOpacity>
-                <TouchableOpacity style={[s.btnAcao, { backgroundColor: C.erro }]} onPress={() => rejeitarMarca(item.id)}><Ionicons name="close" size={18} color={C.branco} /><Text style={{ color: C.branco, fontWeight: '600', marginLeft: 5 }}>Rejeitar</Text></TouchableOpacity>
+                <TouchableOpacity style={[s.btnAcao, { backgroundColor: C.sucesso }]} onPress={() => aprovarMarca(item.id)}><Ionicons name="checkmark" size={18} color={C.branco} /><Text style={{ color: C.branco, marginLeft: 5 }}>Aprovar</Text></TouchableOpacity>
+                <TouchableOpacity style={[s.btnAcao, { backgroundColor: C.erro }]} onPress={() => rejeitarMarca(item.id)}><Ionicons name="close" size={18} color={C.branco} /><Text style={{ color: C.branco, marginLeft: 5 }}>Rejeitar</Text></TouchableOpacity>
               </View>
             </View>
           )}
         />
-        <TouchableOpacity style={[s.btnPrincipal, { margin: 16, backgroundColor: C.card, borderWidth: 1, borderColor: C.erro }]} onPress={handleLogout}><Text style={{ color: C.erro, fontWeight: '700' }}>Sair do Painel</Text></TouchableOpacity>
+        <TouchableOpacity style={[s.btnPrincipal, { margin: 16, backgroundColor: C.card, borderWidth: 1, borderColor: C.erro }]} onPress={handleLogout}><Text style={{ color: C.erro }}>Sair do Painel</Text></TouchableOpacity>
       </SafeAreaView>
     );
   };
 
-  // 👤 PERFIL
+  // PERFIL (com menu de 3 risquinhos)
   const ProfileScreen = () => (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <SafeAreaView style={{ flex: 1 }}>
         <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.roxo} colors={[C.roxo]} />}>
-          <View style={{ paddingTop: 50, alignItems: 'center', paddingHorizontal: 20 }}>
-            <TouchableOpacity style={{ position: 'absolute', right: 16, top: 55 }} onPress={handleLogout}><Text style={{ color: C.erro }}>Sair</Text></TouchableOpacity>
+          {usuario?.fotoCapa && <TouchableOpacity onLongPress={selecionarFotoCapa}><Image source={{ uri: usuario.fotoCapa }} style={{ width: '100%', height: 150 }} /></TouchableOpacity>}
+          {!usuario?.fotoCapa && podePostar() && (
+            <TouchableOpacity style={{ height: 100, backgroundColor: C.card, justifyContent: 'center', alignItems: 'center' }} onPress={selecionarFotoCapa}>
+              <Ionicons name="camera-outline" size={30} color={C.prataEscuro} /><Text style={{ color: C.prataEscuro, fontSize: 12, marginTop: 5 }}>Adicionar foto de capa</Text>
+            </TouchableOpacity>
+          )}
+          <View style={{ paddingTop: 50, alignItems: 'center', paddingHorizontal: 20, marginTop: usuario?.fotoCapa ? -40 : 0 }}>
+            <TouchableOpacity style={{ position: 'absolute', right: 16, top: 55 }} onPress={() => setModalMenuPerfil(true)}>
+              <Ionicons name="menu" size={28} color={C.prata} />
+            </TouchableOpacity>
             <Image source={{ uri: usuario?.foto || 'https://picsum.photos/200' }} style={{ width: 100, height: 100, borderRadius: 50, borderWidth: 2, borderColor: C.prata }} />
             <Text style={{ color: C.prata, fontSize: 22, fontWeight: '700', marginTop: 10 }}>{usuario?.nome}</Text>
             <Text style={{ color: C.prataEscuro }}>{usuario?.usuario}</Text>
             <Text style={{ color: C.roxoClaro, fontSize: 11 }}>{usuario?.tipo === 'marca_aprovada' ? '🏪 Marca' : usuario?.role === 'admin' ? '🛡️ Admin' : '👤 Cliente'}</Text>
             {usuario?.bio ? <Text style={{ color: C.prataEscuro, marginTop: 5 }}>{usuario.bio}</Text> : null}
-            <TouchableOpacity style={s.btnEditarPerfil} onPress={abrirEditarPerfil}><Text style={{ color: C.prata }}>Editar Perfil</Text></TouchableOpacity>
-            <TouchableOpacity style={[s.btnEditarPerfil, { borderColor: C.erro, marginTop: 8 }]} onPress={handleExcluirConta}><Text style={{ color: C.erro, fontSize: 13 }}>⚠️ Excluir Conta</Text></TouchableOpacity>
 
             {podePostar() && (
               <>
-                <TouchableOpacity style={[s.btnEditarPerfil, { marginTop: 8, borderColor: C.sucesso }]} onPress={abrirEditarMetodoVenda}><Text style={{ color: C.sucesso, fontSize: 12 }}>⚙️ Método de Venda</Text></TouchableOpacity>
                 <View style={{ flexDirection: 'row', gap: 30, marginTop: 15 }}>
                   <View style={{ alignItems: 'center' }}><Text style={{ color: C.prata, fontWeight: '700', fontSize: 18 }}>{meusPosts.length}</Text><Text style={{ color: C.prataEscuro, fontSize: 11 }}>Posts</Text></View>
                   <View style={{ alignItems: 'center' }}><Text style={{ color: C.prata, fontWeight: '700', fontSize: 18 }}>{vendasMarca.length}</Text><Text style={{ color: C.prataEscuro, fontSize: 11 }}>Vendas</Text></View>
@@ -804,18 +829,81 @@ export default function App() {
     </View>
   );
 
-  const PlaceholderScreen = ({ titulo }) => (
-    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
-      <View style={{ paddingTop: 50, paddingLeft: 16 }}><Text style={{ color: C.prata, fontSize: 26, fontWeight: '900' }}>{titulo}</Text></View>
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><Ionicons name="construct-outline" size={50} color={C.borda} /><Text style={{ color: C.prataEscuro, marginTop: 10 }}>Em breve</Text></View>
-    </SafeAreaView>
-  );
-
-  const CollabzScreen = () => !podePostar() ? (setTab('home'), null) : <PlaceholderScreen titulo="Collabz 💬" />;
+  // COLLABZ (com sub-abas Marcas e Chatz)
+  const CollabzScreen = () => {
+    if (!podePostar()) { setTab('home'); return null; }
+    if (collabChat) {
+      return (
+        <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 50, paddingBottom: 10, borderBottomWidth: 1, borderColor: C.borda }}>
+            <TouchableOpacity onPress={() => setCollabChat(null)}><Ionicons name="arrow-back" size={24} color={C.prata} /></TouchableOpacity>
+            <Text style={{ color: C.prata, fontSize: 18, fontWeight: '700', marginLeft: 10 }}>{collabChat.nome}</Text>
+          </View>
+          <FlatList data={collabMensagens} keyExtractor={item => item.id} style={{ flex: 1, paddingHorizontal: 16 }}
+            renderItem={({ item }) => (
+              <View style={{ marginBottom: 12, alignItems: item.senderId === usuario.uid ? 'flex-end' : 'flex-start' }}>
+                <View style={{ backgroundColor: item.senderId === usuario.uid ? C.roxo : C.card, padding: 10, borderRadius: 12, maxWidth: '80%' }}>
+                  <Text style={{ color: C.branco }}>{item.texto}</Text>
+                </View>
+                <Text style={{ color: C.prataEscuro, fontSize: 9, marginTop: 2 }}>{item.senderNome}</Text>
+              </View>
+            )}
+          />
+          <View style={{ flexDirection: 'row', paddingHorizontal: 16, paddingVertical: 10, borderTopWidth: 1, borderColor: C.borda, gap: 8 }}>
+            <TextInput style={[s.input, { flex: 1, marginBottom: 0 }]} placeholder="Mensagem..." placeholderTextColor={C.prataEscuro} value={collabMensagem} onChangeText={setCollabMensagem} />
+            <TouchableOpacity onPress={enviarMensagemCollab}><Ionicons name="send" size={24} color={C.roxo} /></TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      );
+    }
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+        <View style={{ paddingTop: 50, paddingLeft: 16 }}><Text style={{ color: C.prata, fontSize: 26, fontWeight: '900' }}>Collabz 💬</Text></View>
+        <View style={{ flexDirection: 'row', paddingHorizontal: 16, gap: 8, marginBottom: 15, marginTop: 10 }}>
+          <TouchableOpacity style={[s.chipFiltro, collabTab === 'marcas' && { backgroundColor: C.roxo }]} onPress={() => setCollabTab('marcas')}>
+            <Text style={{ color: collabTab === 'marcas' ? C.branco : C.prataEscuro, fontWeight: '600', fontSize: 12 }}>🏪 Marcas</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[s.chipFiltro, collabTab === 'chatz' && { backgroundColor: C.roxo }]} onPress={() => setCollabTab('chatz')}>
+            <Text style={{ color: collabTab === 'chatz' ? C.branco : C.prataEscuro, fontWeight: '600', fontSize: 12 }}>💬 Chatz</Text>
+          </TouchableOpacity>
+        </View>
+        {collabTab === 'marcas' ? (
+          <FlatList data={collabMarcas} keyExtractor={item => item.id}
+            ListEmptyComponent={<View style={{ padding: 40, alignItems: 'center' }}><Text style={{ color: C.prataEscuro }}>Nenhuma marca disponível</Text></View>}
+            renderItem={({ item }) => (
+              <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderColor: C.borda }}
+                onPress={() => setCollabChat({ id: [usuario.uid, item.id].sort().join('_'), nome: item.nome })}>
+                <Image source={{ uri: item.foto || 'https://picsum.photos/40' }} style={{ width: 40, height: 40, borderRadius: 20 }} />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={{ color: C.prata, fontWeight: '600' }}>{item.nome}</Text>
+                  <Text style={{ color: C.prataEscuro, fontSize: 11 }}>{item.usuario}</Text>
+                </View>
+                <Ionicons name="chatbubble-outline" size={20} color={C.roxo} />
+              </TouchableOpacity>
+            )}
+          />
+        ) : (
+          <FlatList data={collabMarcas} keyExtractor={item => item.id}
+            ListEmptyComponent={<View style={{ padding: 40, alignItems: 'center' }}><Text style={{ color: C.prataEscuro }}>Nenhuma conversa iniciada</Text></View>}
+            renderItem={({ item }) => (
+              <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderColor: C.borda }}
+                onPress={() => setCollabChat({ id: [usuario.uid, item.id].sort().join('_'), nome: item.nome })}>
+                <Image source={{ uri: item.foto || 'https://picsum.photos/40' }} style={{ width: 40, height: 40, borderRadius: 20 }} />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={{ color: C.prata, fontWeight: '600' }}>{item.nome}</Text>
+                  <Text style={{ color: C.prataEscuro, fontSize: 11 }}>Toque para conversar</Text>
+                </View>
+                <Ionicons name="chatbubble-outline" size={20} color={C.roxo} />
+              </TouchableOpacity>
+            )}
+          />
+        )}
+      </SafeAreaView>
+    );
+  };
 
   const screens = {
-    home: <HomeScreen />, hypez: <HypezScreen />,
-    drops: <DropsScreen />,
+    home: <HomeScreen />, hypez: <HypezScreen />, drops: <DropsScreen />,
     collabz: <CollabzScreen />, admin: <AdminScreen />, profile: <ProfileScreen />,
   };
 
@@ -823,17 +911,17 @@ export default function App() {
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       {screens[tab]}
 
-      {/* Modal Post Ampliado com Carrossel */}
+      {/* Modal Post Ampliado */}
       <Modal visible={!!postAmpliado} animationType="fade" transparent>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.98)', justifyContent: 'center' }}>
           <TouchableOpacity style={{ position: 'absolute', top: 50, right: 16, zIndex: 10 }} onPress={() => { setPostAmpliado(null); setPostCarrosselIndex(0); }}><Ionicons name="close" size={28} color={C.branco} /></TouchableOpacity>
           {postAmpliado && (
             <View style={{ width: '100%' }}>
-              {postAmpliado.imagens && postAmpliado.imagens.length > 1 ? (
+              {postAmpliado.imagens?.length > 1 ? (
                 <View>
                   <FlatList data={postAmpliado.imagens} horizontal pagingEnabled showsHorizontalScrollIndicator={false}
                     keyExtractor={(item, index) => index.toString()}
-                    onMomentumScrollEnd={(e) => { const index = Math.round(e.nativeEvent.contentOffset.x / width); setPostCarrosselIndex(index); }}
+                    onMomentumScrollEnd={(e) => { setPostCarrosselIndex(Math.round(e.nativeEvent.contentOffset.x / width)); }}
                     renderItem={({ item }) => <Image source={{ uri: item }} style={{ width, height: 450 }} />}
                   />
                   <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 8, gap: 6 }}>
@@ -855,6 +943,7 @@ export default function App() {
               <Text style={{ color: C.prataEscuro, fontSize: 13, paddingHorizontal: 16, marginTop: 4 }}>{postAmpliado.desc || postAmpliado.name}</Text>
               {postAmpliado.price && <Text style={{ color: C.sucesso, fontWeight: '700', fontSize: 16, paddingHorizontal: 16, marginTop: 4 }}>{postAmpliado.price}</Text>}
               {postAmpliado.tags && <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, paddingHorizontal: 16, marginTop: 6 }}>{postAmpliado.tags.map((tag, i) => <Text key={i} style={{ color: C.roxoClaro, fontSize: 10, backgroundColor: C.card, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 }}>#{tag}</Text>)}</View>}
+              {postAmpliado.tamanhos && <Text style={{ color: C.prataEscuro, fontSize: 12, paddingHorizontal: 16, marginTop: 4 }}>Tamanhos: {postAmpliado.tamanhos.join(', ')}</Text>}
               <Text style={{ color: C.prataEscuro, fontSize: 10, paddingHorizontal: 16, marginTop: 4 }}>{postAmpliado.data || 'Disponível'}</Text>
             </View>
           )}
@@ -892,7 +981,7 @@ export default function App() {
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 }}><Text style={{ color: C.prata, fontSize: 18, fontWeight: '700' }}>📦 Checkout</Text><TouchableOpacity onPress={() => setModalCheckout(false)}><Ionicons name="close" size={24} color={C.prata} /></TouchableOpacity></View>
             <TextInput style={s.input} placeholder="Endereço completo" placeholderTextColor={C.prataEscuro} value={enderecoEntrega} onChangeText={setEnderecoEntrega} multiline />
             <Text style={{ color: C.prata, fontWeight: '700', fontSize: 16, marginBottom: 10 }}>Total: R$ {totalCarrinho.toFixed(2)}</Text>
-            <TouchableOpacity style={s.btnPrincipal} onPress={() => setModalPagamento(true)}><Text style={{ color: C.branco, fontWeight: '700' }}>💳 Escolher Pagamento</Text></TouchableOpacity>
+            <TouchableOpacity style={s.btnPrincipal} onPress={() => setModalPagamento(true)}><Text style={{ color: C.branco, fontWeight: '700' }}>💳 Pagar com PagSeguro</Text></TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -901,10 +990,9 @@ export default function App() {
       <Modal visible={modalPagamento} animationType="slide" transparent>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'flex-end' }}>
           <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 }}><Text style={{ color: C.prata, fontSize: 18, fontWeight: '700' }}>Pagamento</Text><TouchableOpacity onPress={() => setModalPagamento(false)}><Ionicons name="close" size={24} color={C.prata} /></TouchableOpacity></View>
-            <Text style={{ color: C.prata, fontWeight: '700', fontSize: 16, marginBottom: 15 }}>Total: R$ {totalCarrinho.toFixed(2)}</Text>
-            <TouchableOpacity style={[s.pagamentoBtn, { borderColor: '#00b894' }]} onPress={() => processarPagamento('pix')}><Ionicons name="qr-code-outline" size={30} color="#00b894" /><View style={{ marginLeft: 15, flex: 1 }}><Text style={{ color: C.branco, fontWeight: '700' }}>PIX</Text></View></TouchableOpacity>
-            <TouchableOpacity style={[s.pagamentoBtn, { borderColor: C.roxo }]} onPress={() => processarPagamento('cartao')}><Ionicons name="card-outline" size={30} color={C.roxo} /><View style={{ marginLeft: 15, flex: 1 }}><Text style={{ color: C.branco, fontWeight: '700' }}>Cartão</Text></View></TouchableOpacity>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 }}><Text style={{ color: C.prata, fontSize: 18, fontWeight: '700' }}>PagSeguro</Text><TouchableOpacity onPress={() => setModalPagamento(false)}><Ionicons name="close" size={24} color={C.prata} /></TouchableOpacity></View>
+            <Text style={{ color: C.prataEscuro, marginBottom: 20 }}>Você será redirecionado para concluir o pagamento.</Text>
+            <TouchableOpacity style={s.btnPrincipal} onPress={processarPagamento}><Text style={{ color: C.branco, fontWeight: '700' }}>Ir para PagSeguro</Text></TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -916,21 +1004,28 @@ export default function App() {
             <ScrollView showsVerticalScrollIndicator={false}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 }}>
                 <Text style={{ color: C.prata, fontSize: 18, fontWeight: '700' }}>Novo Produto</Text>
-                <TouchableOpacity onPress={() => { setModalNovoProduto(false); setProdutoImagens([]); setProdutoVideos([]); setProdutoDescricao(''); setProdutoTags(''); }}>
+                <TouchableOpacity onPress={() => { setModalNovoProduto(false); setProdutoImagens([]); setProdutoVideos([]); setProdutoDescricao(''); setProdutoTags(''); setProdutoTamanhos([]); }}>
                   <Ionicons name="close" size={24} color={C.prata} />
                 </TouchableOpacity>
               </View>
-              <TextInput style={s.input} placeholder="Nome do produto *" placeholderTextColor={C.prataEscuro} value={novoProdutoNome} onChangeText={setNovoProdutoNome} />
+              <TextInput style={s.input} placeholder="Nome *" placeholderTextColor={C.prataEscuro} value={novoProdutoNome} onChangeText={setNovoProdutoNome} />
               <TextInput style={s.input} placeholder="Preço (ex: 199,90) *" placeholderTextColor={C.prataEscuro} value={novoProdutoPreco} onChangeText={setNovoProdutoPreco} keyboardType="decimal-pad" />
-              <TextInput style={[s.input, { height: 80 }]} placeholder="Descrição do produto" placeholderTextColor={C.prataEscuro} value={produtoDescricao} onChangeText={setProdutoDescricao} multiline />
-              <TextInput style={s.input} placeholder="Tags (ex: calça, baggy, streetwear)" placeholderTextColor={C.prataEscuro} value={produtoTags} onChangeText={setProdutoTags} />
-              <TextInput style={s.input} placeholder="Link de compra (opcional)" placeholderTextColor={C.prataEscuro} value={novoProdutoLink} onChangeText={setNovoProdutoLink} />
+              <TextInput style={[s.input, { height: 80 }]} placeholder="Descrição" placeholderTextColor={C.prataEscuro} value={produtoDescricao} onChangeText={setProdutoDescricao} multiline />
+              <TextInput style={s.input} placeholder="Tags (ex: calça, baggy)" placeholderTextColor={C.prataEscuro} value={produtoTags} onChangeText={setProdutoTags} />
+              <Text style={{ color: C.prataEscuro, fontSize: 12, marginBottom: 8 }}>Tamanhos:</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+                {TAMANHOS.map(tam => (
+                  <TouchableOpacity key={tam} style={[s.tamanhoBtn, produtoTamanhos.includes(tam) && { backgroundColor: C.roxo }]} onPress={() => toggleTamanho(tam)}>
+                    <Text style={{ color: produtoTamanhos.includes(tam) ? C.branco : C.prataEscuro, fontSize: 13, fontWeight: '600' }}>{tam}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
               <Text style={{ color: C.prataEscuro, fontSize: 12, marginBottom: 8 }}>Imagens (máx. 10) *</Text>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
                 {produtoImagens.map((uri, i) => (
                   <View key={i} style={{ position: 'relative' }}>
                     <Image source={{ uri }} style={{ width: 70, height: 70, borderRadius: 8 }} />
-                    <TouchableOpacity style={{ position: 'absolute', top: -5, right: -5, backgroundColor: C.erro, borderRadius: 10, width: 20, height: 20, justifyContent: 'center', alignItems: 'center' }} onPress={() => removerImagemProduto(i)}><Ionicons name="close" size={12} color={C.branco} /></TouchableOpacity>
+                    <TouchableOpacity style={{ position: 'absolute', top: -5, right: -5, backgroundColor: C.erro, borderRadius: 10, width: 20, height: 20 }} onPress={() => removerImagemProduto(i)}><Ionicons name="close" size={12} color={C.branco} /></TouchableOpacity>
                   </View>
                 ))}
                 {produtoImagens.length < 10 && (
@@ -942,31 +1037,58 @@ export default function App() {
                 {produtoVideos.map((uri, i) => (
                   <View key={i} style={{ position: 'relative' }}>
                     <View style={{ width: 70, height: 70, borderRadius: 8, backgroundColor: C.card, justifyContent: 'center', alignItems: 'center' }}><Ionicons name="play" size={20} color={C.roxo} /></View>
-                    <TouchableOpacity style={{ position: 'absolute', top: -5, right: -5, backgroundColor: C.erro, borderRadius: 10, width: 20, height: 20, justifyContent: 'center', alignItems: 'center' }} onPress={() => removerVideoProduto(i)}><Ionicons name="close" size={12} color={C.branco} /></TouchableOpacity>
+                    <TouchableOpacity style={{ position: 'absolute', top: -5, right: -5, backgroundColor: C.erro, borderRadius: 10, width: 20, height: 20 }} onPress={() => removerVideoProduto(i)}><Ionicons name="close" size={12} color={C.branco} /></TouchableOpacity>
                   </View>
                 ))}
                 {produtoVideos.length < 2 && (
                   <TouchableOpacity style={{ width: 70, height: 70, borderRadius: 8, borderWidth: 2, borderColor: C.roxo, borderStyle: 'dashed', justifyContent: 'center', alignItems: 'center' }} onPress={selecionarVideosProduto}><Ionicons name="add" size={24} color={C.roxo} /></TouchableOpacity>
                 )}
               </View>
-              <TouchableOpacity style={s.btnPrincipal} onPress={adicionarProduto}><Text style={{ color: C.branco, fontWeight: '700' }}>➕ Publicar no Dropz</Text></TouchableOpacity>
+              <TouchableOpacity style={s.btnPrincipal} onPress={adicionarProduto}><Text style={{ color: C.branco, fontWeight: '700' }}>➕ Publicar</Text></TouchableOpacity>
             </ScrollView>
           </View>
         </View>
       </Modal>
 
-      {/* Modal Editar Método de Venda */}
-      <Modal visible={modalEditarMetodoVenda} animationType="slide" transparent>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'flex-end' }}>
+      {/* Modal Editar Perfil (com Excluir Conta no final) */}
+      <Modal visible={modalEditarPerfil} animationType="slide" transparent>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'flex-end' }}>
           <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 }}><Text style={{ color: C.prata, fontSize: 18, fontWeight: '700' }}>Método de Venda</Text><TouchableOpacity onPress={() => setModalEditarMetodoVenda(false)}><Ionicons name="close" size={24} color={C.prata} /></TouchableOpacity></View>
-            <TouchableOpacity style={[s.metodoBtn, metodoVenda === 'site' && { borderColor: C.roxo }]} onPress={() => setMetodoVenda('site')}><Ionicons name="globe-outline" size={20} color={C.roxo} /><View style={{ flex: 1, marginLeft: 10 }}><Text style={{ color: C.prata, fontWeight: '600' }}>Site</Text></View></TouchableOpacity>
-            <TouchableOpacity style={[s.metodoBtn, metodoVenda === 'whatsapp' && { borderColor: C.roxo }]} onPress={() => setMetodoVenda('whatsapp')}><Ionicons name="logo-whatsapp" size={20} color={C.sucesso} /><View style={{ flex: 1, marginLeft: 10 }}><Text style={{ color: C.sucesso, fontWeight: '600' }}>WhatsApp</Text></View></TouchableOpacity>
-            <TouchableOpacity style={[s.metodoBtn, metodoVenda === 'instagram' && { borderColor: C.roxo }]} onPress={() => setMetodoVenda('instagram')}><Ionicons name="logo-instagram" size={20} color="#e1306c" /><View style={{ flex: 1, marginLeft: 10 }}><Text style={{ color: '#e1306c', fontWeight: '600' }}>Instagram</Text></View></TouchableOpacity>
-            {metodoVenda === 'site' && <TextInput style={s.input} placeholder="https://..." placeholderTextColor={C.prataEscuro} value={linkVenda} onChangeText={setLinkVenda} />}
-            {metodoVenda === 'whatsapp' && <TextInput style={s.input} placeholder="11999999999" placeholderTextColor={C.prataEscuro} value={whatsappVenda} onChangeText={setWhatsappVenda} keyboardType="phone-pad" />}
-            {metodoVenda === 'instagram' && <TextInput style={s.input} placeholder="@seuinstagram" placeholderTextColor={C.prataEscuro} value={instagramVenda} onChangeText={setInstagramVenda} />}
-            <TouchableOpacity style={s.btnPrincipal} onPress={salvarMetodoVenda}><Text style={{ color: C.branco, fontWeight: '700' }}>💾 Salvar</Text></TouchableOpacity>
+            <ScrollView>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 }}>
+                <Text style={{ color: C.prata, fontSize: 18, fontWeight: '700' }}>Editar Perfil</Text>
+                <TouchableOpacity onPress={() => setModalEditarPerfil(false)}><Ionicons name="close" size={24} color={C.prata} /></TouchableOpacity>
+              </View>
+              <TouchableOpacity onPress={selecionarFotoPerfil} style={{ alignItems: 'center', marginBottom: 15 }}>
+                <Image source={{ uri: editFoto || usuario?.foto || 'https://picsum.photos/200' }} style={{ width: 80, height: 80, borderRadius: 40 }} />
+                <Text style={{ color: C.roxoClaro, marginTop: 5 }}>Alterar foto</Text>
+              </TouchableOpacity>
+              <TextInput style={s.input} placeholder="Nome" placeholderTextColor={C.prataEscuro} value={editNome} onChangeText={setEditNome} />
+              <TextInput style={s.input} placeholder="Bio" placeholderTextColor={C.prataEscuro} value={editBio} onChangeText={setEditBio} multiline />
+              {podePostar() && <TextInput style={s.input} placeholder="Categoria" placeholderTextColor={C.prataEscuro} value={editCategoria} onChangeText={setEditCategoria} />}
+              <TouchableOpacity style={s.btnPrincipal} onPress={handleEditarPerfil}><Text style={{ color: C.branco, fontWeight: '700' }}>💾 Salvar</Text></TouchableOpacity>
+              <TouchableOpacity style={[s.btnPrincipal, { backgroundColor: C.erro, marginTop: 20 }]} onPress={() => { setModalEditarPerfil(false); handleExcluirConta(); }}>
+                <Text style={{ color: C.branco, fontWeight: '700' }}>⚠️ Excluir Conta</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal Menu Perfil (3 risquinhos) */}
+      <Modal visible={modalMenuPerfil} animationType="slide" transparent>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 }}>
+              <Text style={{ color: C.prata, fontSize: 18, fontWeight: '700' }}>Opções</Text>
+              <TouchableOpacity onPress={() => setModalMenuPerfil(false)}><Ionicons name="close" size={24} color={C.prata} /></TouchableOpacity>
+            </View>
+            <TouchableOpacity style={[s.btnPrincipal, { marginBottom: 10 }]} onPress={() => { setModalMenuPerfil(false); abrirEditarPerfil(); }}>
+              <Text style={{ color: C.branco, fontWeight: '700' }}>✏️ Editar Perfil</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[s.btnPrincipal, { backgroundColor: C.erro, marginTop: 20 }]} onPress={() => { setModalMenuPerfil(false); handleExcluirConta(); }}>
+              <Text style={{ color: C.branco, fontWeight: '700' }}>⚠️ Excluir Conta</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -983,13 +1105,13 @@ export default function App() {
                   <TouchableOpacity style={[s.tipoPostBtn, tipoPost === 'hypez' && { backgroundColor: C.roxo }]} onPress={() => setTipoPost('hypez')}><Ionicons name="play-circle-outline" size={20} color={tipoPost === 'hypez' ? C.branco : C.prataEscuro} /><Text style={{ color: tipoPost === 'hypez' ? C.branco : C.prataEscuro, marginLeft: 5 }}>Hypez</Text></TouchableOpacity>
                 </View>
                 {tipoPost === 'normal' ? <TouchableOpacity style={s.btnUpload} onPress={selecionarImagens}><Ionicons name="images-outline" size={40} color={C.roxo} /><Text style={{ color: C.prata, marginTop: 10 }}>Selecionar até 10 fotos</Text></TouchableOpacity> : <TouchableOpacity style={s.btnUpload} onPress={selecionarVideo}><Ionicons name="videocam-outline" size={40} color={C.roxo} /><Text style={{ color: C.prata, marginTop: 10 }}>Selecionar vídeo</Text></TouchableOpacity>}
-                {imagensSelecionadas.length > 0 && <View style={{ marginTop: 15 }}><Text style={{ color: C.prataEscuro, fontSize: 11, marginBottom: 8 }}>Toque para editar</Text><ScrollView horizontal>{imagensSelecionadas.map((uri, i) => <TouchableOpacity key={i} onPress={() => abrirEditorImagem(uri)}><Image source={{ uri }} style={{ width: 80, height: 80, borderRadius: 8, marginRight: 8, borderWidth: 2, borderColor: C.borda }} /></TouchableOpacity>)}</ScrollView></View>}
+                {imagensSelecionadas.length > 0 && <View style={{ marginTop: 15 }}><ScrollView horizontal>{imagensSelecionadas.map((uri, i) => <TouchableOpacity key={i} onPress={() => abrirEditorImagem(uri)}><Image source={{ uri }} style={{ width: 80, height: 80, borderRadius: 8, marginRight: 8 }} /></TouchableOpacity>)}</ScrollView></View>}
                 <TouchableOpacity style={[s.btnPrincipal, { marginTop: 20 }]} onPress={avancarEtapa}><Text style={{ color: C.branco, fontWeight: '700' }}>Avançar</Text></TouchableOpacity>
               </View>
             ) : (
               <View>
                 <TextInput style={s.input} placeholder="Legenda" placeholderTextColor={C.prataEscuro} value={legendaPost} onChangeText={setLegendaPost} multiline />
-                <TextInput style={s.input} placeholder="@ Mencionar marca" placeholderTextColor={C.prataEscuro} value={mencaoPost} onChangeText={setMencaoPost} />
+                <TextInput style={s.input} placeholder="@ Mencionar" placeholderTextColor={C.prataEscuro} value={mencaoPost} onChangeText={setMencaoPost} />
                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
                   <TouchableOpacity style={[s.btnPrincipal, { flex: 1, backgroundColor: C.card, borderWidth: 1 }]} onPress={() => setEtapaPost(1)}><Text style={{ color: C.prata }}>Voltar</Text></TouchableOpacity>
                   <TouchableOpacity style={[s.btnPrincipal, { flex: 1 }]} onPress={publicarPost}><Text style={{ color: C.branco, fontWeight: '700' }}>Publicar</Text></TouchableOpacity>
@@ -1022,25 +1144,11 @@ export default function App() {
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'flex-end' }}>
           <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '70%' }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 }}><Text style={{ color: C.prata, fontSize: 16, fontWeight: '700' }}>Comentários</Text><TouchableOpacity onPress={() => setModalComentarios(null)}><Ionicons name="close" size={24} color={C.prata} /></TouchableOpacity></View>
-            <ScrollView style={{ maxHeight: 300 }}>{modalComentarios && (timelinePosts.find(p => p.id === modalComentarios)?.comments || hypezPosts.find(p => p.id === modalComentarios)?.comments || []).map((c, i) => <View key={i} style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}><View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: C.roxo, justifyContent: 'center', alignItems: 'center' }}><Text style={{ color: C.branco, fontWeight: '700' }}>{c.autor?.[0]?.toUpperCase()}</Text></View><View><Text style={{ color: C.prata, fontWeight: '600', fontSize: 12 }}>{c.autor}</Text><Text style={{ color: C.prataEscuro, fontSize: 13 }}>{c.texto}</Text></View></View>)}</ScrollView>
+            <ScrollView style={{ maxHeight: 300 }}>{modalComentarios && (timelinePosts.find(p => p.id === modalComentarios)?.comments || []).map((c, i) => <View key={i} style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}><View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: C.roxo, justifyContent: 'center', alignItems: 'center' }}><Text style={{ color: C.branco, fontWeight: '700' }}>{c.autor?.[0]?.toUpperCase()}</Text></View><View><Text style={{ color: C.prata, fontWeight: '600', fontSize: 12 }}>{c.autor}</Text><Text style={{ color: C.prataEscuro, fontSize: 13 }}>{c.texto}</Text></View></View>)}</ScrollView>
             <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
               <TextInput style={[s.input, { flex: 1 }]} placeholder="Comentário..." placeholderTextColor={C.prataEscuro} value={comentarioTexto} onChangeText={setComentarioTexto} />
               <TouchableOpacity onPress={enviarComentario}><Ionicons name="send" size={24} color={C.roxo} /></TouchableOpacity>
             </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Modal Editar Perfil */}
-      <Modal visible={modalEditarPerfil} animationType="slide" transparent>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'flex-end' }}>
-          <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 }}><Text style={{ color: C.prata, fontSize: 18, fontWeight: '700' }}>Editar Perfil</Text><TouchableOpacity onPress={() => setModalEditarPerfil(false)}><Ionicons name="close" size={24} color={C.prata} /></TouchableOpacity></View>
-            <TouchableOpacity onPress={selecionarFotoPerfil} style={{ alignItems: 'center', marginBottom: 15 }}><Image source={{ uri: editFoto || usuario?.foto || 'https://picsum.photos/200' }} style={{ width: 80, height: 80, borderRadius: 40 }} /><Text style={{ color: C.roxoClaro, marginTop: 5 }}>Alterar foto</Text></TouchableOpacity>
-            <TextInput style={s.input} placeholder="Nome" placeholderTextColor={C.prataEscuro} value={editNome} onChangeText={setEditNome} />
-            <TextInput style={s.input} placeholder="Bio" placeholderTextColor={C.prataEscuro} value={editBio} onChangeText={setEditBio} multiline />
-            {podePostar() && <TextInput style={s.input} placeholder="Categoria" placeholderTextColor={C.prataEscuro} value={editCategoria} onChangeText={setEditCategoria} />}
-            <TouchableOpacity style={s.btnPrincipal} onPress={handleEditarPerfil}><Text style={{ color: C.branco, fontWeight: '700' }}>💾 Salvar</Text></TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -1075,9 +1183,9 @@ const s = StyleSheet.create({
   btnAcao: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, borderRadius: 20 },
   produtoCard: { flex: 1, backgroundColor: '#111111', borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: '#1a1a1a', marginBottom: 12 },
   btnCarrinho: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#7b2ff7', borderRadius: 20, paddingVertical: 8 },
-  btnComprar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#4caf50', borderRadius: 20, paddingVertical: 8 },
   pedidoCard: { backgroundColor: '#111111', marginHorizontal: 16, marginBottom: 12, padding: 15, borderRadius: 12, borderWidth: 1, borderColor: '#1a1a1a' },
   metodoBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a1a1a', padding: 14, borderRadius: 12, marginBottom: 10, borderWidth: 2, borderColor: '#1a1a1a' },
   chipFiltro: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: C.card, marginRight: 8, borderWidth: 1, borderColor: C.borda },
   pagamentoBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.card, padding: 16, borderRadius: 12, marginBottom: 10, borderWidth: 2, borderColor: C.borda },
+  tamanhoBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: C.borda, backgroundColor: C.card },
 });
