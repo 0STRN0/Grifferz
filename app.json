@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Grifferz",
-    "slug": "GrifferzFinalV2",
+    "slug": "Grifferz",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -11,17 +11,29 @@
       "resizeMode": "contain",
       "backgroundColor": "#0a0a0a"
     },
+    "ios": {
+      "supportsTablet": true
+    },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0a0a0a"
       },
-      "package": "com.grifferz.store"
+      "package": "com.grifferz.app"
     },
-    "extra": {
-      "eas": {
-        "projectId": "a3378d73-e343-43a0-a9a9-e176a8f6fdcf"
-      }
-    }
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "baseUrl": "/grifferz/",
+      "name": "Grifferz",
+      "shortName": "Grifferz",
+      "lang": "pt-BR",
+      "themeColor": "#0a0a0a",
+      "backgroundColor": "#0a0a0a",
+      "display": "standalone",
+      "orientation": "portrait"
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
   }
 }
