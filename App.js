@@ -109,12 +109,12 @@ export default function App() {
   const [collabMarcas, setCollabMarcas] = useState([]);
   const [searchzQuery, setSearchzQuery] = useState('');
   const [todasMarcas, setTodasMarcas] = useState([]);
+  const [searchzPerfil, setSearchzPerfil] = useState(null);
 
   const podePostar = () => {
     return usuario?.tipo === 'marca_aprovada' || usuario?.role === 'admin';
   };
 
-  // NOTIFICAÇÕES
   useEffect(() => {
     registerForPushNotificationsAsync();
     const subscription = Notifications.addNotificationReceivedListener(n => console.log('Notificação:', n));
@@ -128,7 +128,6 @@ export default function App() {
     }
   }
 
-  // STORIES
   useEffect(() => {
     if (logado) {
       const interval = setInterval(() => {
@@ -146,7 +145,6 @@ export default function App() {
     }
   };
 
-  // SEGUIDORES (Clientes e Marcas podem seguir)
   const seguirUsuario = async (targetId) => {
     if (seguindo.includes(targetId)) {
       setSeguindo(prev => prev.filter(id => id !== targetId));
@@ -163,8 +161,7 @@ export default function App() {
   const processarPagamento = () => {
     setModalPagamento(false);
     setModalCheckout(false);
-    const valorTotal = totalCarrinho.toFixed(2).replace('.', ',');
-    Linking.openURL(`https://pagseguro.uol.com.br/checkout/payment?amount=${valorTotal}`);
+    Linking.openURL('https://pagseguro.uol.com.br/');
     finalizarPedido();
   };
 
@@ -218,11 +215,7 @@ export default function App() {
       const listaDrops = []; snapDrops.forEach(doc => listaDrops.push({ id: doc.id, ...doc.data() }));
       setDrops(listaDrops);
 
-      // ✅ Todas as marcas para Searchz
-      const snapTodasMarcas = await getDocs(query(collection(db, 'usuarios'), where('tipo', '==', 'marca_aprovada')));
-      const listaTodas = []; snapTodasMarcas.forEach(doc => listaTodas.push({ id: doc.id, ...doc.data() }));
-      setTodasMarcas(listaTodas);
-
+      // ✅ CARREGA MEUS POSTS SEMPRE (Admin e Marca)
       if (podePostar()) {
         const snapMeus = await getDocs(query(collection(db, 'posts'), where('marcaId', '==', usuario.uid), orderBy('criadoEm', 'desc')));
         const listaMeus = []; snapMeus.forEach(doc => listaMeus.push({ id: doc.id, ...doc.data() }));
@@ -231,12 +224,14 @@ export default function App() {
         const snapVendas = await getDocs(query(collection(db, 'pedidos'), where('marcaId', '==', usuario.uid), orderBy('criadoEm', 'desc')));
         const listaVendas = []; snapVendas.forEach(doc => listaVendas.push({ id: doc.id, ...doc.data() }));
         setVendasMarca(listaVendas);
-
-        // Marcas para Collabz
-        const snapMarcasCollab = await getDocs(query(collection(db, 'usuarios'), where('tipo', '==', 'marca_aprovada')));
-        const listaMarcasCollab = []; snapMarcasCollab.forEach(doc => listaMarcasCollab.push({ id: doc.id, ...doc.data() }));
-        setCollabMarcas(listaMarcasCollab.filter(m => m.id !== usuario.uid));
       }
+
+      // ✅ TODAS as marcas aprovadas
+      const snapTodas = await getDocs(query(collection(db, 'usuarios'), where('tipo', '==', 'marca_aprovada')));
+      const listaTodas = []; snapTodas.forEach(doc => listaTodas.push({ id: doc.id, ...doc.data() }));
+      setTodasMarcas(listaTodas);
+      // ✅ Collabz: inclui TODAS as marcas, sem filtrar a própria
+      setCollabMarcas(listaTodas);
 
       const snapPedidos = await getDocs(query(collection(db, 'pedidos'), where('clienteId', '==', usuario?.uid), orderBy('criadoEm', 'desc')));
       const listaPedidos = []; snapPedidos.forEach(doc => listaPedidos.push({ id: doc.id, ...doc.data() }));
@@ -244,7 +239,6 @@ export default function App() {
     } catch (e) { console.log(e); }
   };
 
-  // CARRINHO
   const adicionarAoCarrinho = (p) => {
     const ex = carrinho.find(i => i.id === p.id);
     if (ex) setCarrinho(carrinho.map(i => i.id === p.id ? { ...i, quantidade: i.quantidade + 1 } : i));
@@ -274,7 +268,6 @@ export default function App() {
     Alert.alert('✅ Atualizado!'); carregarTodosDados();
   };
 
-  // PRODUTOS
   const selecionarImagensProduto = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsMultipleSelection: true, selectionLimit: 10, quality: 0.8,
@@ -315,7 +308,6 @@ export default function App() {
 
   const comprarProduto = (p) => { adicionarAoCarrinho(p); Alert.alert('✅ Adicionado!', 'Produto adicionado ao carrinho.'); };
 
-  // ADMIN
   const carregarMarcasPendentes = async () => {
     const q = query(collection(db, 'usuarios'), where('tipo', '==', 'marca_pendente'));
     const sn = await getDocs(q); const pend = []; sn.forEach(d => pend.push({ id: d.id, ...d.data() }));
@@ -326,7 +318,6 @@ export default function App() {
     Alert.alert('Rejeitar', 'Confirmar?', [{ text: 'Sim', style: 'destructive', onPress: async () => { await updateDoc(doc(db, 'usuarios', id), { tipo: 'cliente', status: 'rejeitado' }); Alert.alert('❌'); carregarMarcasPendentes(); } }, { text: 'Cancelar', style: 'cancel' }]);
   };
 
-  // FOTO DE CAPA (MAIOR - estilo Twitter)
   const selecionarFotoCapa = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, quality: 0.8 });
     if (!result.canceled && result.assets) {
@@ -344,10 +335,27 @@ export default function App() {
   const salvarEdicao = () => { if (editandoImagem) { setImagensSelecionadas(prev => { const idx = prev.findIndex(img => img === editandoImagem || prev.includes(editandoImagem)); if (idx >= 0) { const n = [...prev]; n[idx] = editandoImagem; return n; } return [...prev, editandoImagem]; }); } setModalEditarImagem(false); setEditandoImagem(null); };
   const selecionarFotoPerfil = async () => { const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.8 }); if (!r.canceled && r.assets) { const m = await ImageManipulator.manipulateAsync(r.assets[0].uri, [{ resize: { width: 400, height: 400 } }], { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }); setEditFoto(m.uri); } };
   const avancarEtapa = () => { if (imagensSelecionadas.length === 0 && !videoUri) { Alert.alert('Selecione imagem ou vídeo!'); return; } setEtapaPost(2); };
-  const publicarPost = async () => { if (!podePostar()) return; if (!legendaPost.trim()) { Alert.alert('Adicione legenda!'); return; } try { await addDoc(collection(db, 'posts'), { marcaId: usuario.uid, marcaNome: usuario.nome, marcaFoto: usuario.foto, imagens: imagensSelecionadas, video: videoUri, desc: legendaPost.trim(), mencao: mencaoPost.trim(), tipo: tipoPost, likes: 0, comments: [], reposts: 0, data: 'Agora', criadoEm: new Date().toISOString() }); limparFormPost(); carregarTodosDados(); Alert.alert('✅ Publicado!'); } catch (e) { Alert.alert('Erro'); } };
+  
+  // ✅ CORRIGIDO: publicarPost agora chama carregarTodosDados para atualizar o grid
+  const publicarPost = async () => {
+    if (!podePostar()) return;
+    if (!legendaPost.trim()) { Alert.alert('Adicione legenda!'); return; }
+    try {
+      await addDoc(collection(db, 'posts'), {
+        marcaId: usuario.uid, marcaNome: usuario.nome, marcaFoto: usuario.foto,
+        imagens: imagensSelecionadas, video: videoUri, desc: legendaPost.trim(),
+        mencao: mencaoPost.trim(), tipo: tipoPost, likes: 0, comments: [], reposts: 0,
+        data: 'Agora', criadoEm: new Date().toISOString()
+      });
+      limparFormPost();
+      await carregarTodosDados(); // ✅ Atualiza a lista de posts
+      Alert.alert('✅ Publicado!');
+    } catch (e) { Alert.alert('Erro'); }
+  };
+  
   const limparFormPost = () => { setModalNovoPost(false); setEtapaPost(1); setImagensSelecionadas([]); setVideoUri(null); setLegendaPost(''); setMencaoPost(''); setTipoPost('normal'); };
 
-  // ✅ Curtir sem recarregar timeline
+  // ✅ CORRIGIDO: handleLike não recarrega a timeline
   const handleLike = async (postId) => {
     const ref = doc(db, 'posts', postId);
     const post = timelinePosts.find(p => p.id === postId) || hypezPosts.find(p => p.id === postId);
@@ -369,7 +377,6 @@ export default function App() {
   const abrirComentarios = (postId) => setModalComentarios(postId);
   const enviarComentario = async () => { if (!comentarioTexto.trim() || !modalComentarios) return; await updateDoc(doc(db, 'posts', modalComentarios), { comments: arrayUnion({ texto: comentarioTexto, autor: usuario?.nome || 'Anônimo', data: 'Agora' }) }); setComentarioTexto(''); setModalComentarios(null); };
 
-  // COLLABZ CHAT
   useEffect(() => {
     if (collabChat) {
       const q = query(collection(db, 'collabz_messages'), where('chatId', '==', collabChat.id), orderBy('timestamp'));
@@ -385,16 +392,12 @@ export default function App() {
   const enviarMensagemCollab = async () => {
     if (!collabMensagem.trim() || !collabChat) return;
     await addDoc(collection(db, 'collabz_messages'), {
-      chatId: collabChat.id,
-      senderId: usuario.uid,
-      senderNome: usuario.nome,
-      texto: collabMensagem.trim(),
-      timestamp: serverTimestamp(),
+      chatId: collabChat.id, senderId: usuario.uid, senderNome: usuario.nome,
+      texto: collabMensagem.trim(), timestamp: serverTimestamp(),
     });
     setCollabMensagem('');
   };
 
-  // AUTENTICAÇÃO
   const handleCadastro = async () => {
     setErro('');
     if (!email.trim() || !senha.trim()) { setErro('Preencha todos!'); return; }
@@ -429,7 +432,7 @@ export default function App() {
     } catch (e) { setErro('Erro: ' + e.message); } finally { setLoading(false); }
   };
 
-  const handleLogout = async () => { await signOut(auth); await SecureStore.deleteItemAsync('grifferz_session'); setLogado(false); setUsuario(null); setPerfilVisitado(null); setCarrinho([]); };
+  const handleLogout = async () => { await signOut(auth); await SecureStore.deleteItemAsync('grifferz_session'); setLogado(false); setUsuario(null); setPerfilVisitado(null); setCarrinho([]); setSearchzPerfil(null); };
 
   const handleExcluirConta = () => {
     Alert.alert('⚠️ Excluir Conta', 'Todos os dados serão removidos.', [
@@ -454,13 +457,13 @@ export default function App() {
 
   const abrirEditarPerfil = () => { setEditNome(usuario?.nome || ''); setEditBio(usuario?.bio || ''); setEditCategoria(usuario?.categoria || ''); setEditFoto(usuario?.foto || ''); setModalEditarPerfil(true); };
 
-  const abrirPerfilMarca = async (marcaId) => {
-    if (marcaId === usuario.uid) { setTab('profile'); return; }
+  // ✅ CORRIGIDO: abrirPerfilSearchz funcional
+  const abrirPerfilSearchz = async (marcaId) => {
     const ud = await getDoc(doc(db, 'usuarios', marcaId));
     if (ud.exists()) {
       const sp = await getDocs(query(collection(db, 'posts'), where('marcaId', '==', marcaId), orderBy('criadoEm', 'desc')));
       const posts = []; sp.forEach(d => posts.push({ id: d.id, ...d.data() }));
-      setPerfilVisitado({ ...ud.data(), id: marcaId, posts });
+      setSearchzPerfil({ ...ud.data(), id: marcaId, posts });
     }
   };
 
@@ -535,6 +538,44 @@ export default function App() {
     );
   }
 
+  // ✅ SEARCHZ PERFIL VISUALIZADOR
+  if (searchzPerfil) {
+    const p = searchzPerfil;
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', padding: 16, paddingTop: 50, gap: 10 }}>
+          <TouchableOpacity onPress={() => setSearchzPerfil(null)}><Ionicons name="arrow-back" size={24} color={C.prata} /></TouchableOpacity>
+          <Text style={{ color: C.prata, fontSize: 18, fontWeight: '700' }}>{p.usuario}</Text>
+        </View>
+        <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.roxo} colors={[C.roxo]} />}>
+          {p.fotoCapa && <Image source={{ uri: p.fotoCapa }} style={{ width: '100%', height: 200 }} />}
+          <View style={{ alignItems: 'center', padding: 20, marginTop: p.fotoCapa ? -50 : 0 }}>
+            <Image source={{ uri: p.foto || 'https://picsum.photos/200' }} style={{ width: 100, height: 100, borderRadius: 50, borderWidth: 3, borderColor: C.bg }} />
+            <Text style={{ color: C.prata, fontSize: 22, fontWeight: '700', marginTop: 10 }}>{p.nome}</Text>
+            <Text style={{ color: C.prataEscuro }}>{p.usuario}</Text>
+            <Text style={{ color: C.prataEscuro }}>{p.bio}</Text>
+            <Text style={{ color: C.roxoClaro, fontSize: 11 }}>{p.categoria}</Text>
+            <TouchableOpacity style={[s.btnAcao, { backgroundColor: seguindo.includes(p.id) ? C.card : C.roxo, borderWidth: seguindo.includes(p.id) ? 1 : 0, borderColor: C.borda, marginTop: 10, paddingHorizontal: 20 }]} onPress={() => seguirUsuario(p.id)}>
+              <Text style={{ color: C.branco, fontSize: 12 }}>{seguindo.includes(p.id) ? 'Seguindo' : 'Seguir'}</Text>
+            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', gap: 30, marginTop: 15 }}>
+              <View style={{ alignItems: 'center' }}><Text style={{ color: C.prata, fontWeight: '700', fontSize: 18 }}>{p.posts?.length || 0}</Text><Text style={{ color: C.prataEscuro, fontSize: 11 }}>Posts</Text></View>
+              <View style={{ alignItems: 'center' }}><Text style={{ color: C.prata, fontWeight: '700', fontSize: 18 }}>{p.seguidores?.length || 0}</Text><Text style={{ color: C.prataEscuro, fontSize: 11 }}>Seguidores</Text></View>
+              <View style={{ alignItems: 'center' }}><Text style={{ color: C.prata, fontWeight: '700', fontSize: 18 }}>{p.seguindo?.length || 0}</Text><Text style={{ color: C.prataEscuro, fontSize: 11 }}>Seguindo</Text></View>
+            </View>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 20 }}>
+              {p.posts?.map(post => (
+                <TouchableOpacity key={post.id} style={{ width: '33.33%', padding: 1 }} onPress={() => setPostAmpliado(post)}>
+                  <Image source={{ uri: post.imagens?.[0] || 'https://picsum.photos/200' }} style={{ width: '100%', height: 130 }} />
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
   if (perfilVisitado) {
     const p = perfilVisitado;
     return (
@@ -544,7 +585,6 @@ export default function App() {
           <Text style={{ color: C.prata, fontSize: 18, fontWeight: '700' }}>{p.usuario}</Text>
         </View>
         <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.roxo} colors={[C.roxo]} />}>
-          {/* ✅ FOTO DE CAPA MAIOR (estilo Twitter) */}
           {p.fotoCapa && <Image source={{ uri: p.fotoCapa }} style={{ width: '100%', height: 200 }} />}
           <View style={{ alignItems: 'center', padding: 20, marginTop: p.fotoCapa ? -50 : 0 }}>
             <Image source={{ uri: p.foto || 'https://picsum.photos/200' }} style={{ width: 100, height: 100, borderRadius: 50, borderWidth: 3, borderColor: C.bg }} />
@@ -552,8 +592,6 @@ export default function App() {
             <Text style={{ color: C.prataEscuro }}>{p.usuario}</Text>
             <Text style={{ color: C.prataEscuro }}>{p.bio}</Text>
             <Text style={{ color: C.roxoClaro, fontSize: 11 }}>{p.categoria}</Text>
-            
-            {/* ✅ Botão Seguir + Contadores */}
             <TouchableOpacity style={[s.btnAcao, { backgroundColor: seguindo.includes(p.id) ? C.card : C.roxo, borderWidth: seguindo.includes(p.id) ? 1 : 0, borderColor: C.borda, marginTop: 10, paddingHorizontal: 20 }]} onPress={() => seguirUsuario(p.id)}>
               <Text style={{ color: C.branco, fontSize: 12 }}>{seguindo.includes(p.id) ? 'Seguindo' : 'Seguir'}</Text>
             </TouchableOpacity>
@@ -587,7 +625,7 @@ export default function App() {
 
   // 🔍 SEARCHZ
   const SearchzScreen = () => {
-    const filtradas = todasMarcas.filter(m => 
+    const filtradas = todasMarcas.filter(m =>
       m.nome?.toLowerCase().includes(searchzQuery.toLowerCase()) ||
       m.usuario?.toLowerCase().includes(searchzQuery.toLowerCase()) ||
       m.categoria?.toLowerCase().includes(searchzQuery.toLowerCase())
@@ -605,7 +643,7 @@ export default function App() {
           data={filtradas}
           keyExtractor={item => item.id}
           renderItem={({ item }) => (
-            <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderColor: C.borda }} onPress={() => abrirPerfilMarca(item.id)}>
+            <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderColor: C.borda }} onPress={() => abrirPerfilSearchz(item.id)}>
               <Image source={{ uri: item.foto || 'https://picsum.photos/40' }} style={{ width: 50, height: 50, borderRadius: 25 }} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={{ color: C.prata, fontWeight: '700' }}>{item.nome}</Text>
@@ -672,7 +710,7 @@ export default function App() {
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.roxo} colors={[C.roxo]} />}
             ListEmptyComponent={<View style={{ padding: 40, alignItems: 'center' }}><Ionicons name="search-outline" size={50} color={C.borda} /><Text style={{ color: C.prataEscuro, marginTop: 10 }}>Nenhum produto</Text></View>}
             renderItem={({ item }) => (
-              <TouchableOpacity style={s.produtoCard} onPress={() => setPostAmpliado({ ...item, imagens: item.images, desc: item.descricao || item.name, marcaNome: item.brand, likes: 0 })}>
+              <TouchableOpacity style={s.produtoCard}>
                 <Image source={{ uri: item.images?.[0] || item.image }} style={{ width: '100%', height: 180, borderTopLeftRadius: 12, borderTopRightRadius: 12 }} />
                 {item.images?.length > 1 && <View style={{ position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}><Text style={{ color: C.branco, fontSize: 10 }}>1/{item.images.length}</Text></View>}
                 <View style={{ padding: 10 }}>
@@ -745,7 +783,7 @@ export default function App() {
         renderItem={({ item }) => (
           <View style={{ marginBottom: 20 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, marginBottom: 8 }}>
-              <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }} onPress={() => abrirPerfilMarca(item.marcaId)}>
+              <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }} onPress={() => abrirPerfilSearchz(item.marcaId)}>
                 <Image source={{ uri: item.marcaFoto || 'https://picsum.photos/32' }} style={{ width: 32, height: 32, borderRadius: 16 }} />
                 <Text style={{ color: C.prata, fontWeight: '700' }}>{item.marcaNome}</Text>
               </TouchableOpacity>
@@ -831,12 +869,11 @@ export default function App() {
     );
   };
 
-  // PERFIL (com foto de capa maior e menu)
+  // PERFIL
   const ProfileScreen = () => (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <SafeAreaView style={{ flex: 1 }}>
         <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.roxo} colors={[C.roxo]} />}>
-          {/* ✅ FOTO DE CAPA MAIOR */}
           {usuario?.fotoCapa && (
             <TouchableOpacity onLongPress={selecionarFotoCapa}>
               <Image source={{ uri: usuario.fotoCapa }} style={{ width: '100%', height: 200 }} />
@@ -857,14 +894,11 @@ export default function App() {
             <Text style={{ color: C.prataEscuro }}>{usuario?.usuario}</Text>
             <Text style={{ color: C.roxoClaro, fontSize: 11 }}>{usuario?.tipo === 'marca_aprovada' ? '🏪 Marca' : usuario?.role === 'admin' ? '🛡️ Admin' : '👤 Cliente'}</Text>
             {usuario?.bio ? <Text style={{ color: C.prataEscuro, marginTop: 5 }}>{usuario.bio}</Text> : null}
-
-            {/* ✅ Contadores */}
             <View style={{ flexDirection: 'row', gap: 30, marginTop: 15 }}>
               <View style={{ alignItems: 'center' }}><Text style={{ color: C.prata, fontWeight: '700', fontSize: 18 }}>{meusPosts.length}</Text><Text style={{ color: C.prataEscuro, fontSize: 11 }}>Posts</Text></View>
               <View style={{ alignItems: 'center' }}><Text style={{ color: C.prata, fontWeight: '700', fontSize: 18 }}>{usuario?.seguidores?.length || 0}</Text><Text style={{ color: C.prataEscuro, fontSize: 11 }}>Seguidores</Text></View>
               <View style={{ alignItems: 'center' }}><Text style={{ color: C.prata, fontWeight: '700', fontSize: 18 }}>{usuario?.seguindo?.length || 0}</Text><Text style={{ color: C.prataEscuro, fontSize: 11 }}>Seguindo</Text></View>
             </View>
-
             {podePostar() && (
               <>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 20, width: '100%' }}>
@@ -889,7 +923,7 @@ export default function App() {
     </View>
   );
 
-  // COLLABZ
+  // ✅ COLLABZ (TODAS as marcas)
   const CollabzScreen = () => {
     if (!podePostar()) { setTab('home'); return null; }
     if (collabChat) {
@@ -928,33 +962,39 @@ export default function App() {
           </TouchableOpacity>
         </View>
         {collabTab === 'marcas' ? (
-          <FlatList data={collabMarcas} keyExtractor={item => item.id}
+          <FlatList
+            data={collabMarcas}
+            keyExtractor={item => item.id}
             ListEmptyComponent={<View style={{ padding: 40, alignItems: 'center' }}><Text style={{ color: C.prataEscuro }}>Nenhuma marca disponível</Text></View>}
             renderItem={({ item }) => (
-              <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderColor: C.borda }}
-                onPress={() => setCollabChat({ id: [usuario.uid, item.id].sort().join('_'), nome: item.nome })}>
-                <Image source={{ uri: item.foto || 'https://picsum.photos/40' }} style={{ width: 40, height: 40, borderRadius: 20 }} />
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <Text style={{ color: C.prata, fontWeight: '600' }}>{item.nome}</Text>
-                  <Text style={{ color: C.prataEscuro, fontSize: 11 }}>{item.usuario}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderColor: C.borda, marginHorizontal: 16, backgroundColor: C.card, borderRadius: 12, marginBottom: 8 }}>
+                <Image source={{ uri: item.foto || 'https://picsum.photos/40' }} style={{ width: 50, height: 50, borderRadius: 25 }} />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={{ color: C.prata, fontWeight: '700' }}>{item.nome}</Text>
+                  <Text style={{ color: C.prataEscuro, fontSize: 12 }}>{item.usuario}</Text>
                 </View>
-                <Ionicons name="chatbubble-outline" size={20} color={C.roxo} />
-              </TouchableOpacity>
+                <TouchableOpacity style={{ backgroundColor: C.roxo, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 }} onPress={() => setCollabChat({ id: [usuario.uid, item.id].sort().join('_'), nome: item.nome })}>
+                  <Ionicons name="chatbubble-outline" size={18} color={C.branco} />
+                </TouchableOpacity>
+              </View>
             )}
           />
         ) : (
-          <FlatList data={collabMarcas} keyExtractor={item => item.id}
+          <FlatList
+            data={collabMarcas}
+            keyExtractor={item => item.id}
             ListEmptyComponent={<View style={{ padding: 40, alignItems: 'center' }}><Text style={{ color: C.prataEscuro }}>Nenhuma conversa iniciada</Text></View>}
             renderItem={({ item }) => (
-              <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderColor: C.borda }}
-                onPress={() => setCollabChat({ id: [usuario.uid, item.id].sort().join('_'), nome: item.nome })}>
-                <Image source={{ uri: item.foto || 'https://picsum.photos/40' }} style={{ width: 40, height: 40, borderRadius: 20 }} />
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <Text style={{ color: C.prata, fontWeight: '600' }}>{item.nome}</Text>
-                  <Text style={{ color: C.prataEscuro, fontSize: 11 }}>Toque para conversar</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderColor: C.borda, marginHorizontal: 16, backgroundColor: C.card, borderRadius: 12, marginBottom: 8 }}>
+                <Image source={{ uri: item.foto || 'https://picsum.photos/40' }} style={{ width: 50, height: 50, borderRadius: 25 }} />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={{ color: C.prata, fontWeight: '700' }}>{item.nome}</Text>
+                  <Text style={{ color: C.prataEscuro, fontSize: 12 }}>{item.usuario}</Text>
                 </View>
-                <Ionicons name="chatbubble-outline" size={20} color={C.roxo} />
-              </TouchableOpacity>
+                <TouchableOpacity style={{ backgroundColor: C.roxo, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 }} onPress={() => setCollabChat({ id: [usuario.uid, item.id].sort().join('_'), nome: item.nome })}>
+                  <Ionicons name="chatbubble-outline" size={18} color={C.branco} />
+                </TouchableOpacity>
+              </View>
             )}
           />
         )}
@@ -1110,7 +1150,7 @@ export default function App() {
         </View>
       </Modal>
 
-      {/* Modal Editar Perfil (com Excluir Conta no final) */}
+      {/* Modal Editar Perfil */}
       <Modal visible={modalEditarPerfil} animationType="slide" transparent>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'flex-end' }}>
           <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 }}>
@@ -1135,26 +1175,26 @@ export default function App() {
         </View>
       </Modal>
 
-      {/* Modal Menu Perfil */}
+      {/* Modal Menu Perfil com SAIR */}
       <Modal visible={modalMenuPerfil} animationType="slide" transparent>
-  <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'flex-end' }}>
-    <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 }}>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 }}>
-        <Text style={{ color: C.prata, fontSize: 18, fontWeight: '700' }}>Opções</Text>
-        <TouchableOpacity onPress={() => setModalMenuPerfil(false)}><Ionicons name="close" size={24} color={C.prata} /></TouchableOpacity>
-      </View>
-      <TouchableOpacity style={[s.btnPrincipal, { marginBottom: 10 }]} onPress={() => { setModalMenuPerfil(false); abrirEditarPerfil(); }}>
-        <Text style={{ color: C.branco, fontWeight: '700' }}>✏️ Editar Perfil</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={[s.btnPrincipal, { marginBottom: 10, backgroundColor: C.card, borderWidth: 1, borderColor: C.erro }]} onPress={() => { setModalMenuPerfil(false); handleLogout(); }}>
-        <Text style={{ color: C.erro, fontWeight: '700' }}>🚪 Sair da Conta</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={[s.btnPrincipal, { backgroundColor: C.erro, marginTop: 10 }]} onPress={() => { setModalMenuPerfil(false); handleExcluirConta(); }}>
-        <Text style={{ color: C.branco, fontWeight: '700' }}>⚠️ Excluir Conta</Text>
-      </TouchableOpacity>
-    </View>
-  </View>
-</Modal>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 }}>
+              <Text style={{ color: C.prata, fontSize: 18, fontWeight: '700' }}>Opções</Text>
+              <TouchableOpacity onPress={() => setModalMenuPerfil(false)}><Ionicons name="close" size={24} color={C.prata} /></TouchableOpacity>
+            </View>
+            <TouchableOpacity style={[s.btnPrincipal, { marginBottom: 10 }]} onPress={() => { setModalMenuPerfil(false); abrirEditarPerfil(); }}>
+              <Text style={{ color: C.branco, fontWeight: '700' }}>✏️ Editar Perfil</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[s.btnPrincipal, { marginBottom: 10, backgroundColor: C.card, borderWidth: 1, borderColor: C.erro }]} onPress={() => { setModalMenuPerfil(false); handleLogout(); }}>
+              <Text style={{ color: C.erro, fontWeight: '700' }}>🚪 Sair da Conta</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[s.btnPrincipal, { backgroundColor: C.erro, marginTop: 10 }]} onPress={() => { setModalMenuPerfil(false); handleExcluirConta(); }}>
+              <Text style={{ color: C.branco, fontWeight: '700' }}>⚠️ Excluir Conta</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* Modal Novo Post */}
       <Modal visible={modalNovoPost} animationType="slide" transparent>
@@ -1218,7 +1258,7 @@ export default function App() {
 
       <View style={{ flexDirection: 'row', borderTopWidth: 1, borderTopColor: C.borda, paddingBottom: 30, paddingTop: 10 }}>
         {tabsFinal.map(t => (
-          <TouchableOpacity key={t.key} style={{ flex: 1, alignItems: 'center' }} onPress={() => { setTab(t.key); setPerfilVisitado(null); }}>
+          <TouchableOpacity key={t.key} style={{ flex: 1, alignItems: 'center' }} onPress={() => { setTab(t.key); setPerfilVisitado(null); setSearchzPerfil(null); }}>
             <Ionicons name={tab === t.key ? t.icon : `${t.icon}-outline`} size={22} color={tab === t.key ? C.prata : C.prataEscuro} />
             <Text style={{ color: tab === t.key ? C.prata : C.prataEscuro, fontSize: 9 }}>{t.label}</Text>
           </TouchableOpacity>
